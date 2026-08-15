@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#08090e" />
+    <title>ILLUSTRIOUS // LoRA Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Illustrious LoRA Studio">
+        <span class="brand-mark">I//</span>
+        <span class="glitch mini-glitch" data-text="ILLUSTRIOUS">ILLUSTRIOUS</span>
+        <small>LoRA Studio</small>
+      </a>
+      <div class="node-status" id="node-status">
+        <i></i><span>NODE // VERIFICANDO</span>
+      </div>
+      <button id="logout" class="subtle-button" type="button">ENCERRAR</button>
+    </header>
+
+    <main class="app-shell">
+      <section class="masthead">
+        <div>
+          <p class="eyebrow">[ ILLUSTRIOUS SDXL / T4 RENDER ARRAY ]</p>
+          <h1 class="glitch" data-text="LABORATÓRIO DE IMAGEM">LABORATÓRIO DE IMAGEM</h1>
+        </div>
+        <p class="masthead-copy">Controle o sinal, empilhe adaptadores e arquive cada variação. A sessão existe enquanto o nó Colab permanecer em operação.</p>
+      </section>
+
+      <section class="studio-grid">
+        <form id="generation-form" class="panel generation-panel">
+          <div class="panel-heading">
+            <span class="bracket">[</span><h2>SINAL DE ENTRADA</h2><span class="bracket">]</span>
+            <div class="mode-switch" role="group" aria-label="Modo de geração">
+              <button type="button" data-mode="text2img" class="mode active">TXT→IMG</button>
+              <button type="button" data-mode="img2img" class="mode">IMG→IMG</button>
+            </div>
+          </div>
+
+          <label class="field-label" for="prompt">PROMPT PRINCIPAL</label>
+          <textarea id="prompt" name="prompt" class="prompt-area" maxlength="4000" placeholder="ex.: 1girl, chrome bodysuit, neon city, intricate details, cinematic light" required></textarea>
+          <div class="tag-bank" id="prompt-tags" aria-label="Sugestões para prompt">
+            <button type="button" data-target="prompt">masterpiece</button><button type="button" data-target="prompt">best quality</button><button type="button" data-target="prompt">anime screencap</button><button type="button" data-target="prompt">detailed eyes</button><button type="button" data-target="prompt">dramatic lighting</button>
+          </div>
+
+          <label class="field-label" for="negative-prompt">NEGATIVE PROMPT</label>
+          <textarea id="negative-prompt" name="negative_prompt" class="prompt-area compact" maxlength="4000" placeholder="ex.: worst quality, lowres, anatomy error"></textarea>
+          <div class="tag-bank muted" id="negative-tags" aria-label="Sugestões para negative prompt">
+            <button type="button" data-target="negative-prompt">worst quality</button><button type="button" data-target="negative-prompt">low quality</button><button type="button" data-target="negative-prompt">bad anatomy</button><button type="button" data-target="negative-prompt">extra digits</button><button type="button" data-target="negative-prompt">watermark</button>
+          </div>
+
+          <div id="upload-zone" class="upload-zone hidden">
+            <input id="source-image" name="image" type="file" accept="image/png,image/jpeg,image/webp" />
+            <label for="source-image"><span>↑</span> INJETAR IMAGEM-BASE <small>PNG / JPG / WEBP • até 16 MB</small></label>
+            <p id="upload-name">NENHUM ARQUIVO NO BUFFER</p>
+          </div>
+
+          <div class="section-divider"><span>PARÂMETROS DE CONSOLE</span></div>
+          <div class="controls-grid">
+            <label class="control"><span>SEED</span><input id="seed" type="number" min="-1" max="4294967295" value="-1" /><small>-1 = aleatória</small></label>
+            <label class="control"><span>STEPS <output id="steps-value">28</output></span><input id="steps" type="range" min="10" max="60" value="28" /></label>
+            <label class="control"><span>GUIDANCE <output id="guidance-value">6.5</output></span><input id="guidance" type="range" min="1" max="15" step="0.5" value="6.5" /></label>
+            <label class="control"><span>WIDTH</span><select id="width"><option>512</option><option>576</option><option>640</option><option>704</option><option>768</option><option>832</option><option>896</option><option>960</option><option selected>1024</option></select></label>
+            <label class="control"><span>HEIGHT</span><select id="height"><option>512</option><option>576</option><option>640</option><option>704</option><option>768</option><option>832</option><option>896</option><option>960</option><option selected>1024</option></select></label>
+            <label class="control strength-control"><span>STRENGTH <output id="strength-value">0.65</output></span><input id="strength" type="range" min="0.05" max="1" step="0.05" value="0.65" /></label>
+          </div>
+
+          <div class="section-divider lora-divider"><span>RACK DE ADAPTADORES</span><button id="open-catalog" type="button" class="text-button">+ EXPLORAR LoRAs</button></div>
+          <div id="selected-loras" class="lora-rack empty-rack"><p>Nenhum adaptador conectado. O sinal será renderizado apenas pelo checkpoint.</p></div>
+
+          <div class="generate-footer">
+            <div class="render-meta"><span id="job-state">PRONTO PARA INICIAR</span><small id="vram-readout">VRAM // --</small></div>
+            <button id="generate" class="signal-button generate-button" type="submit"><span>RENDERIZAR</span><b>↗</b></button>
+          </div>
+        </form>
+
+        <aside class="panel telemetry-panel">
+          <div class="panel-heading"><span class="bracket">[</span><h2>TELEMETRIA</h2><span class="bracket">]</span></div>
+          <div class="telemetry-status"><div class="pulse-core"></div><p id="telemetry-title">EM ESPERA</p><span id="telemetry-subtitle">Sem job ativo no buffer.</span></div>
+          <div class="progress-rail"><div id="progress-bar"></div></div><strong id="progress-number">0%</strong>
+          <dl class="technical-readout"><div><dt>ENGINE</dt><dd>ILLUSTRIOUS SDXL</dd></div><div><dt>QUEUE</dt><dd id="queue-readout">0 JOBS</dd></div><div><dt>ARCHIVE</dt><dd id="archive-readout">CHECANDO</dd></div><div><dt>NODE</dt><dd>T4 / CUDA</dd></div></dl>
+          <div class="telemetry-log" id="telemetry-log"><p><span>00:00:00</span> Aguardando conexão com o núcleo.</p></div>
+          <div class="signal-diagram" aria-hidden="true"><span></span><i></i><span></span><i></i><span></span></div>
+        </aside>
+      </section>
+
+      <section class="history-section">
+        <div class="history-heading"><div><p class="eyebrow">[ PERSISTENT OUTPUT ARCHIVE ]</p><h2>MEMÓRIA DE IMAGENS</h2></div><button id="refresh-history" class="subtle-button" type="button">↻ SINCRONIZAR</button></div>
+        <div id="history-grid" class="history-grid"><div class="empty-history"><span>///</span><p>O arquivo ainda não contém sinais gerados.</p></div></div>
+      </section>
+    </main>
+
+    <dialog id="catalog-dialog" class="catalog-dialog">
+      <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / BASE: ILLUSTRIOUS ]</p><h2>LOJA DE ADAPTADORES</h2></div><button id="close-catalog" type="button" class="close-button" aria-label="Fechar catálogo">×</button></div>
+      <div class="catalog-filters"><input id="catalog-query" type="search" placeholder="BUSCAR NOME OU ESTILO" /><input id="catalog-tag" type="text" placeholder="TAG OPCIONAL" /><select id="catalog-sort"><option value="Most Downloaded">MAIS BAIXADOS</option><option value="Highest Rated">MELHOR AVALIADOS</option><option value="Newest">MAIS NOVOS</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="catalog-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="search-catalog" class="signal-button small" type="button">CONSULTAR</button></div>
+      <div id="catalog-grid" class="catalog-grid"><p class="catalog-empty">Abra o catálogo para localizar LoRAs compatíveis.</p></div>
+      <div class="catalog-footer"><span id="catalog-note">O catálogo consulta exclusivamente LoRAs com base Illustrious.</span><button id="next-catalog" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
+    </dialog>
+    <div id="toast" class="toast" role="status"></div>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

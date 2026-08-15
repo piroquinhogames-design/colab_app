@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#08090e" />
+    <title>ILLUSTRIOUS // ACCESS GATE</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="access-page">
+    <main class="access-card glitch-frame">
+      <p class="eyebrow">[ NODE // COLAB-T4 ]</p>
+      <h1 class="glitch" data-text="ILLUSTRIOUS">ILLUSTRIOUS</h1>
+      <p class="access-copy">LoRA Studio // terminal de geração remota</p>
+      <form id="login-form" class="stack-form">
+        <label for="password">CHAVE DE ACESSO</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+        <button class="signal-button" type="submit">INICIAR SESSÃO <span>→</span></button>
+        <p id="login-error" class="form-error" role="alert"></p>
+      </form>
+      <footer>ERR::AUTH-GATE // protected session</footer>
+    </main>
+    <script>
+      const form = document.querySelector('#login-form');
+      const error = document.querySelector('#login-error');
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        error.textContent = '';
+        const button = form.querySelector('button');
+        button.disabled = true;
+        try {
+          const response = await fetch('/api/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({password: document.querySelector('#password').value}),
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || 'Falha na autenticação.');
+          window.location.assign('/');
+        } catch (err) {
+          error.textContent = err.message;
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
