@@ -1,0 +1,10 @@
+accelerate>=0.33.0
+diffusers>=0.30.0
+flask>=3.0.0
+huggingface-hub>=0.24.0
+mega.py>=1.0.8
+pillow>=10.0.0
+requests>=2.32.0
+safetensors>=0.4.0
+torch>=2.3.0
+transformers>=4.44.0
