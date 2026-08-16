@@ -74,12 +74,12 @@ def main() -> None:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
     if (
         "from diffusers import ModularPipeline" not in server_source
-        or "self.pipe.load_components()" not in server_source
+        or "self.pipe.load_components(torch_dtype=torch.float16)" not in server_source
         or "_prepare_anima_for_t4" not in server_source
         or '.half().to("cuda")' not in server_source
         or "load_components(dtype=torch.float16)" in server_source
     ):
-        raise AssertionError("Anima deve carregar componentes sem kwargs e convertê-los explicitamente para FP16/CUDA")
+        raise AssertionError("Anima deve carregar componentes em torch.float16 e movê-los explicitamente para CUDA")
     if "archive-initializer" not in server_source or "archive_ready" not in server_source:
         raise AssertionError("A conexão MEGA deve ocorrer sem bloquear a abertura do servidor")
     if '"ready": archive_ready.is_set()' not in server_source:

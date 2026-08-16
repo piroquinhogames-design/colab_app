@@ -615,12 +615,12 @@ class GeneratorEngine:
 
     @staticmethod
     def _prepare_anima_for_t4(pipeline: Any, torch_module: Any) -> None:
-        """Move os módulos do Anima para CUDA em FP16 sem passar dtype ao loader.
+        """Move os módulos do Anima para CUDA em FP16 após o carregamento.
 
-        O `load_components` do Diffusers 0.39 encaminha kwargs diretamente para
-        cada componente. O CosmosTransformer3DModel não aceita `dtype` em seu
-        construtor, então o carregamento precisa ocorrer sem esse argumento e a
-        conversão para o formato suportado pela T4 deve ser explícita.
+        O `load_components` do Diffusers 0.39 aceita `torch_dtype` e encaminha
+        esse argumento apenas aos componentes de rede. A conversão explícita
+        continua sendo feita aqui para garantir que todos os módulos do Anima
+        estejam efetivamente em CUDA antes da primeira inferência.
         """
         components = getattr(pipeline, "components", {})
         for component in components.values():
@@ -665,12 +665,11 @@ class GeneratorEngine:
                     "Reexecute o inicializador para instalar Diffusers 0.39.0+."
                 ) from error
             try:
-                # O loader modular encaminha kwargs para cada componente e o
-                # CosmosTransformer3DModel rejeita `dtype`. Carregamos no dtype
-                # padrão e convertemos os módulos explicitamente para FP16/CUDA,
-                # formato compatível com a GPU T4.
+                # `torch_dtype` é o argumento aceito pelo loader de componentes.
+                # Sem ele, o Anima é materializado em FP32 e pode estourar a VRAM
+                # da T4 antes que a conversão para FP16 aconteça.
                 self.pipe = ModularPipeline.from_pretrained(repo_id)
-                self.pipe.load_components()
+                self.pipe.load_components(torch_dtype=torch.float16)
                 self._prepare_anima_for_t4(self.pipe, torch)
                 self.img_pipe = None
                 self.loaded_model_id = spec["id"]
