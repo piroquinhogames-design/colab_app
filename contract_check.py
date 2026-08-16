@@ -66,6 +66,12 @@ def main() -> None:
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
+    if "_prepare_lora_file" not in server_source or "_is_unsupported_lora_key" not in server_source:
+        raise AssertionError("O servidor deve preparar LoRAs com metadados alpha incompatíveis")
+    if not server.GeneratorEngine._is_unsupported_lora_key("lora_unet_label_emb_0_0.alpha"):
+        raise AssertionError("A chave alpha problemática deve ser identificada")
+    if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
+        raise AssertionError("Pesos normais da LoRA não podem ser descartados")
 
     isolated_root = Path(tempfile.mkdtemp(prefix="illustrious-install-contract-"))
     original_app_dir = launch_colab.APP_DIR
@@ -122,11 +128,12 @@ def main() -> None:
     original_get = server.requests.get
     server.requests.get = fake_get
     try:
-        catalog = client.get("/api/catalog?tag=portrait")
+        catalog = client.get("/api/catalog?query=style+adapter&tag=portrait")
     finally:
         server.requests.get = original_get
     assert_equal(catalog.status_code, 200, "Catálogo deve responder")
     assert_equal(called["params"]["baseModels"], "Illustrious", "Catálogo deve filtrar Illustrious")
+    assert_equal(called["params"]["query"], "style adapter", "Catálogo deve encaminhar pesquisa por nome")
     catalog_json = catalog.get_json()
     assert_equal(catalog_json["items"][0]["version_id"], 73, "Versão padrão de LoRA deve ser exposta")
     assert_equal([item["id"] for item in catalog_json["items"][0]["versions"]], [73, 74], "Todas as versões Illustrious devem ser expostas")
@@ -234,6 +241,8 @@ def main() -> None:
     frontend_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
     if "refreshHistory({sync: true})" not in frontend_source or "item.filename || item.id" not in frontend_source:
         raise AssertionError("Interface deve sincronizar e renderizar cards restaurados sem filename original")
+    if "https://civitai.red/models/" not in frontend_source or "#catalog-query" not in frontend_source:
+        raise AssertionError("Interface deve abrir o Civitai no domínio .red e aceitar pesquisa por nome")
     sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
     assert_equal(sync.status_code, 200, "Sincronização manual deve responder")
     sync_payload = sync.get_json()

@@ -142,7 +142,7 @@ function renderCatalog(items) {
         ${escapeHtml(version.name || `Versão ${version.id}`)}
       </option>`).join('');
     const modelData = {model_id: item.id, name: item.name || 'LoRA sem nome', versions};
-    const civitaiUrl = `https://civitai.com/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
+    const civitaiUrl = `https://civitai.red/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
     return `
     <article class="catalog-card">
       ${item.image ? `<img loading="lazy" src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" />` : ''}
@@ -158,6 +158,10 @@ function renderCatalog(items) {
       </div>
     </article>`;
   }).join('');
+  bindCatalogActions();
+}
+
+function bindCatalogActions() {
   $$('[data-add-lora]').forEach((button) => button.addEventListener('click', () => {
     try {
       const model = JSON.parse(button.dataset.addLora);
@@ -169,7 +173,7 @@ function renderCatalog(items) {
   $$('[data-version-select]').forEach((picker) => picker.addEventListener('change', () => {
     const card = picker.closest('.catalog-card');
     const link = card && card.querySelector('[data-civitai-link]');
-    if (link) link.href = `https://civitai.com/models/${encodeURIComponent(picker.dataset.versionSelect)}?modelVersionId=${encodeURIComponent(picker.value)}`;
+    if (link) link.href = `https://civitai.red/models/${encodeURIComponent(picker.dataset.versionSelect)}?modelVersionId=${encodeURIComponent(picker.value)}`;
   }));
 }
 
@@ -190,8 +194,7 @@ async function loadCatalog({append = false} = {}) {
       renderCatalog(payload.items);
       const next = $('#catalog-grid').innerHTML;
       $('#catalog-grid').innerHTML = `${current}${next}`;
-      $$('[data-add-lora]').forEach((element) => element.onclick = null);
-      $$('[data-add-lora]').forEach((element) => element.addEventListener('click', () => addLora(JSON.parse(element.dataset.addLora))));
+      bindCatalogActions();
     } else {
       renderCatalog(payload.items);
     }
@@ -335,6 +338,12 @@ function bindEvents() {
   $('#open-catalog').addEventListener('click', () => { $('#catalog-dialog').showModal(); loadCatalog(); });
   $('#close-catalog').addEventListener('click', () => $('#catalog-dialog').close());
   $('#search-catalog').addEventListener('click', () => { state.catalogCursor = null; loadCatalog(); });
+  ['#catalog-query', '#catalog-tag'].forEach((selector) => $(selector).addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    state.catalogCursor = null;
+    loadCatalog();
+  }));
   $('#catalog-adult').addEventListener('change', () => { state.catalogCursor = null; $('#next-catalog').disabled = true; });
   $('#next-catalog').addEventListener('click', () => loadCatalog({append: true}));
   $('#refresh-history').addEventListener('click', () => { refreshHistory({sync: true}); log('Solicitando sincronização do arquivo MEGA.'); });

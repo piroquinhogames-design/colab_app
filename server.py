@@ -448,6 +448,42 @@ class GeneratorEngine:
         return destination
 
     @staticmethod
+    def _is_unsupported_lora_key(key: str) -> bool:
+        """Identifica o metadado alpha que o conversor SGM do Diffusers rejeita."""
+        return key.startswith("lora_") and key.endswith(".alpha")
+
+    @classmethod
+    def _prepare_lora_file(cls, source: Path) -> Path:
+        """Cria uma cópia compatível quando a LoRA traz chaves alpha legadas."""
+        compatible = source.with_name(f"{source.stem}_compatible{source.suffix}")
+        if compatible.exists() and compatible.stat().st_mtime >= source.stat().st_mtime:
+            return compatible
+
+        try:
+            from safetensors import safe_open
+            from safetensors.torch import save_file
+        except ImportError as exc:
+            raise RuntimeError("A dependência safetensors é necessária para preparar esta LoRA.") from exc
+
+        with safe_open(str(source), framework="pt", device="cpu") as handle:
+            keys = list(handle.keys())
+            unsupported = [key for key in keys if cls._is_unsupported_lora_key(key)]
+            if not unsupported:
+                return source
+            tensors = {key: handle.get_tensor(key) for key in keys if key not in unsupported}
+            metadata = handle.metadata() or {}
+
+        temporary = compatible.with_suffix(".part")
+        temporary.unlink(missing_ok=True)
+        try:
+            save_file(tensors, str(temporary), metadata=metadata)
+            temporary.replace(compatible)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        return compatible
+
+    @staticmethod
     def _vram() -> float | None:
         try:
             import torch
@@ -471,9 +507,17 @@ class GeneratorEngine:
                 adapters: list[str] = []
                 weights: list[float] = []
                 for index, selected in enumerate(job.params.loras):
-                    path = self._download_lora(selected.version_id)
+                    downloaded = self._download_lora(selected.version_id)
+                    path = self._prepare_lora_file(downloaded)
                     adapter = f"lora_{index}_{selected.version_id}"
-                    self.pipe.load_lora_weights(str(path), adapter_name=adapter)
+                    try:
+                        self.pipe.load_lora_weights(str(path), adapter_name=adapter)
+                    except ValueError as exc:
+                        if "Checkpoint not supported because layer" in str(exc):
+                            raise RuntimeError(
+                                f"A LoRA '{selected.name}' não é compatível com o checkpoint Illustrious/SDXL."
+                            ) from exc
+                        raise
                     adapters.append(adapter)
                     weights.append(selected.weight)
                 if adapters:
