@@ -168,7 +168,8 @@ async function loadCatalog({append = false} = {}) {
       renderCatalog(payload.items);
     }
     $('#next-catalog').disabled = !state.catalogCursor;
-    $('#catalog-note').textContent = `${payload.items.length} sinais encontrados // base Illustrious${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'}`;
+    const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
+    $('#catalog-note').textContent = `${payload.items.length} sinais encontrados // base Illustrious${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'} // ${authState}`;
   } catch (error) {
     toast(error.message, true);
   } finally { button.disabled = false; }
@@ -256,6 +257,7 @@ async function submitJob(event) {
     const job = await api('/api/jobs', {method: 'POST', body: data});
     state.activeJobId = job.id;
     setTelemetry(job);
+    if (!job.preferences_persisted) log('Preferências enfileiradas localmente; arquivo MEGA indisponível para salvar o último prompt.');
     log(`Job ${job.id.slice(0, 8)} colocado na fila.`);
     toast('Job enviado para o nó T4.');
     state.pollTimer = setInterval(pollJob, 1200);
@@ -272,6 +274,7 @@ async function bootstrap() {
     $('#archive-readout').style.color = payload.archive.available ? 'var(--acid)' : 'var(--danger)';
     if (!payload.archive.available) log(payload.archive.error || 'Arquivo MEGA ainda não foi conectado.');
     restoreLastSettings(payload.last_settings);
+    if (payload.last_settings_source === 'mega') log('Manifesto de preferências recuperado do MEGA.');
     renderHistory(payload.jobs || []);
     const active = (payload.jobs || []).find((item) => ['queued', 'running'].includes(item.status));
     if (active) { state.activeJobId = active.id; setTelemetry(active); state.pollTimer = setInterval(pollJob, 1200); }

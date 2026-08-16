@@ -84,8 +84,7 @@ def main() -> None:
     catalog_json = catalog.get_json()
     assert_equal(catalog_json["items"][0]["version_id"], 73, "Versão de LoRA deve ser exposta")
     assert_equal(catalog_json["next_cursor"], "next-page", "Cursor deve ser preservado")
-    if "nsfw" in called["params"]:
-        raise AssertionError("Catálogo padrão não deve solicitar conteúdo adulto")
+    assert_equal(called["params"]["nsfw"], "false", "Catálogo padrão deve declarar nsfw=false")
     server.requests.get = fake_get
     try:
         adult_catalog = client.get("/api/catalog?include_adult=true")
@@ -93,6 +92,7 @@ def main() -> None:
         server.requests.get = original_get
     assert_equal(adult_catalog.status_code, 200, "Catálogo adulto deve responder")
     assert_equal(called["params"]["nsfw"], "true", "Catálogo adulto deve solicitar nsfw=true")
+    assert_equal(adult_catalog.get_json()["catalog_query"]["nsfw"], "true", "Resposta deve expor o filtro adulto aplicado")
 
     remote: dict[str, bytes] = {}
     class FakeMegaClient:
@@ -116,6 +116,7 @@ def main() -> None:
     restored_bootstrap = client.get("/api/bootstrap")
     assert_equal(restored_bootstrap.status_code, 200, "Bootstrap deve responder com preferências persistidas")
     assert_equal(restored_bootstrap.get_json()["last_settings"], remembered, "Bootstrap deve restaurar as últimas preferências")
+    assert_equal(restored_bootstrap.get_json()["last_settings_source"], "mega", "Bootstrap deve identificar a origem MEGA das preferências")
 
     params = server.GenerationParams("signal", "none", 123, 28, 6.5, 1024, 768, .65, "text2img", [])
     job = server.Job("job-contract", "2026-01-01T00:00:00+00:00", "completed", 100, params, filename="job-contract.png")

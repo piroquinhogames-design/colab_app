@@ -84,7 +84,10 @@ def parse_json(raw: str | None, fallback: Any) -> Any:
 
 def civitai_headers() -> dict[str, str]:
     token = os.environ.get("CIVITAI_TOKEN", "").strip()
-    return {"Authorization": f"Bearer {token}"} if token else {}
+    headers = {"User-Agent": "Illustrious-LoRA-Studio/1.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def authentication_required(view: Callable):
@@ -576,10 +579,12 @@ def logout():
 @app.route("/api/bootstrap")
 @authentication_required
 def bootstrap():
+    last_settings = archive.load_last_settings()
     return jsonify({
         "csrf": session.get("csrf"), "jobs": manager.public_jobs(),
         "archive": {"available": archive.available, "error": archive.error, "folder": MEGA_FOLDER},
-        "last_settings": archive.load_last_settings(),
+        "last_settings": last_settings,
+        "last_settings_source": "mega" if last_settings else None,
         "limits": {"maxLoras": MAX_LORAS, "sizes": list(range(512, 1025, 64))},
         "model": {"name": "WAI-illustrious-SDXL", "cached": MODEL_PATH.exists()},
     })
@@ -589,13 +594,14 @@ def bootstrap():
 @authentication_required
 def catalog():
     include_adult = request.args.get("include_adult", "").strip().lower() in {"1", "true", "yes"}
+    if include_adult and not os.environ.get("CIVITAI_TOKEN", "").strip():
+        return jsonify({"error": "Defina CIVITAI_TOKEN no servidor para consultar conteúdo adulto autorizado."}), 400
     params: dict[str, Any] = {
         "limit": min(max(int(request.args.get("limit", 24)), 1), 48), "types": "LORA",
         "baseModels": "Illustrious", "sort": request.args.get("sort", "Most Downloaded"),
         "period": request.args.get("period", "AllTime"), "primaryFileOnly": "true",
+        "nsfw": "true" if include_adult else "false",
     }
-    if include_adult:
-        params["nsfw"] = "true"
     if request.args.get("cursor"):
         params["cursor"] = request.args["cursor"]
     if request.args.get("query"):
@@ -620,7 +626,10 @@ def catalog():
             "tags": model.get("tags", [])[:10], "version_id": version.get("id"), "version": version.get("name"),
             "image": image, "downloads": version.get("stats", {}).get("downloadCount", 0), "mature": bool(model.get("nsfw")),
         })
-    return jsonify({"items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"), "includes_adult": include_adult})
+    return jsonify({
+        "items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"),
+        "includes_adult": include_adult, "catalog_query": {"nsfw": params["nsfw"], "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
+    })
 
 
 @app.route("/api/jobs", methods=["POST"])
@@ -647,9 +656,11 @@ def create_job():
         params = validate_params(raw, source)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    archive.save_last_settings(saved_settings(params))
+    preferences_persisted = archive.save_last_settings(saved_settings(params))
     job = manager.enqueue(params)
-    return jsonify(job.public()), 202
+    payload = job.public()
+    payload["preferences_persisted"] = preferences_persisted
+    return jsonify(payload), 202
 
 
 @app.route("/api/jobs/<job_id>")
