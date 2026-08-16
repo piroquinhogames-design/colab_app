@@ -48,6 +48,12 @@ def validate_runtime() -> None:
     import torch
     import diffusers
     import peft
+    try:
+        from Crypto.Cipher import AES
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "PyCryptodome não foi carregado; reinicie o runtime Colab e execute a célula novamente."
+        ) from error
 
     expected_peft = "0.17.0"
     installed_peft = importlib.metadata.version("peft")
@@ -66,7 +72,7 @@ def validate_runtime() -> None:
         )
     print(
         f"[setup] Runtime validado: torch={torch.__version__}, diffusers={diffusers.__version__}, "
-        f"transformers={transformers_version}, peft={peft.__version__}"
+        f"transformers={transformers_version}, peft={peft.__version__}, crypto=AES"
     )
 
 

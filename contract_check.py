@@ -60,6 +60,8 @@ def main() -> None:
         raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
     if 'transformers_version != "4.48.3"' not in launcher_source:
         raise AssertionError("O runtime deve confirmar a versão de Transformers compatível com PEFT")
+    if "from Crypto.Cipher import AES" not in launcher_source:
+        raise AssertionError("O runtime deve validar o módulo Crypto exigido pelo cliente MEGA")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
