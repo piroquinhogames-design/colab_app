@@ -208,8 +208,9 @@ def main() -> None:
             self._api_request({"a": "us"})
             return self
     class HttpResponse:
-        def __init__(self, status_code, text):
+        def __init__(self, status_code, text, headers=None):
             self.status_code, self.text = status_code, text
+            self.headers = headers or {}
     request_log = []
     original_post = server.requests.post
     try:
@@ -241,6 +242,37 @@ def main() -> None:
         server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
         if not request_log or request_log[-1][1]["headers"]["Content-Type"] != "application/json":
             raise AssertionError("O adaptador MEGA deve enviar JSON com cabeçalho explícito")
+
+        original_hashcash_solver = server.MegaArchive._solve_hashcash
+        original_sha256 = server.hashlib.sha256
+        hashcash_challenge = "1:192:unused:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        try:
+            class TailDigest:
+                def digest(self):
+                    return (b"\xff" * 28) + b"\x00\x00\x00\x00"
+            server.hashlib.sha256 = lambda _payload: TailDigest()
+            protocol_proof = server.MegaArchive._solve_hashcash(
+                "1:0:unused:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            )
+            if not protocol_proof.startswith("1:AAAAAAAA") or not protocol_proof.endswith(":AAAAAA"):
+                raise AssertionError("A prova Hashcash deve usar os quatro bytes finais e nonce Base64 URL-safe")
+            server.hashlib.sha256 = original_sha256
+            solved_challenges = []
+            server.MegaArchive._solve_hashcash = staticmethod(
+                lambda challenge: solved_challenges.append(challenge) or "1:proof:nonce"
+            )
+            response_sequence = iter([
+                HttpResponse(402, "", {"X-Hashcash": hashcash_challenge}),
+                HttpResponse(200, "[{}]"),
+            ])
+            request_log.clear()
+            server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or next(response_sequence))
+            server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
+            assert_equal(solved_challenges, [hashcash_challenge], "O desafio X-Hashcash deve ser resolvido uma vez")
+            assert_equal(request_log[-1][1]["headers"].get("X-Hashcash"), "1:proof:nonce", "A repetição MEGA deve enviar a prova X-Hashcash")
+        finally:
+            server.hashlib.sha256 = original_sha256
+            server.MegaArchive._solve_hashcash = staticmethod(original_hashcash_solver)
     finally:
         server.Mega = original_mega
         server.requests.post = original_post

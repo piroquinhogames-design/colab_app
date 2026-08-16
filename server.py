@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import asyncio
 import functools
+import hashlib
 import hmac
 import json
 import os
@@ -200,6 +201,47 @@ class MegaArchive:
         return f"Não foi possível conectar ao MEGA: {detail[:180]}"
 
     @staticmethod
+    def _solve_hashcash(challenge: str) -> str:
+        """Resolve o desafio PoW retornado pelo Web API do MEGA sem registrar o token."""
+        parts = challenge.split(":")
+        if len(parts) != 4 or parts[0] != "1":
+            raise ValueError("desafio X-Hashcash não suportado")
+        try:
+            easiness = int(parts[1])
+        except ValueError as exc:
+            raise ValueError("dificuldade X-Hashcash inválida") from exc
+        if not 0 <= easiness < 256 or not parts[3]:
+            raise ValueError("desafio X-Hashcash inválido")
+        try:
+            token = base64.urlsafe_b64decode(parts[3] + "=" * (-len(parts[3]) % 4))
+        except (ValueError, base64.binascii.Error) as exc:
+            raise ValueError("token X-Hashcash inválido") from exc
+        if len(token) > 48:
+            raise ValueError("token X-Hashcash maior que o formato suportado")
+
+        base = ((easiness & 63) << 1) + 1
+        shifts = (easiness >> 6) * 7 + 3
+        threshold = base << shifts
+        work = bytearray(4 + 262144 * 48)
+        for offset in range(4, len(work), 48):
+            work[offset : offset + len(token)] = token
+        while True:
+            digest = hashlib.sha256(work).digest()
+            # O cliente público compatível interpreta os quatro bytes finais do SHA-256
+            # como inteiro big-endian (equivalente ao reverse + UInt32 no .NET).
+            if int.from_bytes(digest[-4:], "big") <= threshold:
+                nonce = base64.urlsafe_b64encode(bytes(work[:4])).rstrip(b"=").decode("ascii")
+                return f"1:{parts[3]}:{nonce}"
+            cursor = 0
+            while True:
+                work[cursor] = (work[cursor] + 1) & 0xFF
+                if work[cursor]:
+                    break
+                cursor += 1
+                if cursor >= 4:
+                    raise RuntimeError("espaço de nonce X-Hashcash esgotado")
+
+    @staticmethod
     def _login_with_http_adapter(email: str, password: str):
         """Usa o protocolo da biblioteca, mas valida a resposta HTTP antes do JSON.
 
@@ -229,12 +271,25 @@ class MegaArchive:
                     f"operação {operation}; HTTP {response.status_code}; {reason}; resposta com {len(body)} bytes"
                 )
 
+            headers = {"Accept": "application/json", "Content-Type": "application/json"}
             response = requests.post(
                 url,
                 **request_args,
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                headers=headers,
             )
             body = response.text or ""
+            challenge = (getattr(response, "headers", {}) or {}).get("X-Hashcash", "")
+            if response.status_code == 402 and challenge:
+                try:
+                    proof = MegaArchive._solve_hashcash(challenge)
+                except (ValueError, RuntimeError) as exc:
+                    raise protocol_error(response, body, "desafio X-Hashcash inválido") from exc
+                response = requests.post(
+                    url,
+                    **request_args,
+                    headers={**headers, "X-Hashcash": proof},
+                )
+                body = response.text or ""
             if response.status_code < 200 or response.status_code >= 300:
                 raise protocol_error(response, body, "status não-2xx")
             if not body.strip():
