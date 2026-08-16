@@ -46,6 +46,8 @@ def main() -> None:
     requirements = (package_root / "requirements.txt").read_text(encoding="utf-8")
     if "peft==0.17.0" not in requirements:
         raise AssertionError("O pacote deve fixar a versão PEFT compatível com carregamento de LoRA")
+    if "huggingface-hub>=0.34.0,<1.0" not in requirements:
+        raise AssertionError("O Hub deve permanecer na série 0.x compatível com Transformers")
     if "pycryptodome==3.21.0" not in requirements:
         raise AssertionError("O pacote deve instalar pycryptodome para o módulo Crypto exigido pelo MEGA")
     if any(line.strip().startswith("torch") for line in requirements.splitlines()):
