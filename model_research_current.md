@@ -59,3 +59,13 @@ A API pública confirma o nome **Nova EXAnime AM**, base model **Anima**, versã
 Fontes: https://huggingface.co/circlestone-labs/Anima-Base-v1.0-Diffusers, https://huggingface.co/circlestone-labs/Anima, https://civitai.com/articles/33274/anima-generation-guide-part-1-general-model-a-bit-of-history
 
 Anima é uma arquitetura própria de aproximadamente 2B parâmetros, derivada de Cosmos-Predict2 e usando Qwen3 0.6B como encoder. O card oficial indica uso de `DiffusionPipeline.from_pretrained` no formato Diffusers, enquanto o checkpoint Civitai é nativo de workflows ComfyUI; portanto não deve passar pelo atual `StableDiffusionXLPipeline.from_single_file`. O card recomenda, para Anima Aesthetic/Base, 30–50 steps, CFG 4–5 e samplers como `euler_a`; LoRAs devem ser treinadas para a família Anima/Base. O backend deve marcar `engine=anima` e bloquear o carregador SDXL quando não houver um engine Anima configurado.
+
+## Correção do repositório/engine Anima — 2026-08-16
+
+A página oficial `https://huggingface.co/circlestone-labs/Anima-Base-v1.0-Diffusers` existe e informa um modelo Diffusers de 2B em BF16. A documentação atual do Diffusers em `https://huggingface.co/docs/diffusers/en/api/pipelines/anima` descreve Anima como uma pipeline modular experimental: `ModularPipeline.from_pretrained("circlestone-labs/Anima-Base-v1.0-Diffusers")`, seguida de `pipe.load_components(torch_dtype=torch.bfloat16)` e `pipe.to("cuda")`. O pipeline suporta text2image e usa `FlowMatchEulerDiscreteScheduler`.
+
+Também existe a conversão comunitária `https://huggingface.co/CalamitousFelicitousness/Anima-1.0-Base-Diffusers`, que declara arquitetura `CosmosTransformer3DModel`, Qwen3, adapter LLM e VAE AutoencoderKLWan; recomenda 30–50 steps, CFG 4–5 e resolução 512–1536. A causa do 404 observado no painel foi um endereço que não encontrou `model_index.json` no momento do carregamento, embora o repositório `circlestone-labs/Anima-Base-v1.0-Diffusers` seja listado publicamente. A correção deve usar o pipeline modular da versão do Diffusers compatível com o repositório ou validar o manifesto antes de tentar carregar.
+
+## Ajuste final da API modular
+
+A API oficial atual usa `pipe.load_components(dtype=torch.bfloat16)`. O ModelLab usa `dtype=torch.float16` para a GPU T4, mantendo `ModularPipeline.from_pretrained(...)` e `.to("cuda")`. O manifesto validado é `modular_model_index.json` (HTTP 200); `model_index.json` retorna HTTP 404 por não ser uma pipeline clássica.

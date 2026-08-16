@@ -61,13 +61,17 @@ def main() -> None:
         raise AssertionError("O inicializador deve tolerar inicialização lenta com timeout configurável")
     if '"--upgrade", "--no-deps"' not in launcher_source:
         raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
-    if 'transformers_version != "4.48.3"' not in launcher_source:
-        raise AssertionError("O runtime deve confirmar a versão de Transformers compatível com PEFT")
+    if 'transformers_version < Version("4.51.0")' not in launcher_source:
+        raise AssertionError("O runtime deve confirmar Transformers 4.51.0+ para Qwen3/Anima")
+    if 'diffusers_version < Version("0.39.0")' not in launcher_source:
+        raise AssertionError("O runtime deve confirmar Diffusers 0.39.0+ para a pipeline modular do Anima")
     if "from Crypto.Cipher import AES" not in launcher_source:
         raise AssertionError("O runtime deve validar o módulo Crypto exigido pelo cliente MEGA")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
+    if "from diffusers import ModularPipeline" not in server_source or "load_components(dtype=torch.float16)" not in server_source:
+        raise AssertionError("Anima deve usar ModularPipeline e carregar componentes explicitamente em FP16")
     if "archive-initializer" not in server_source or "archive_ready" not in server_source:
         raise AssertionError("A conexão MEGA deve ocorrer sem bloquear a abertura do servidor")
     if '"ready": archive_ready.is_set()' not in server_source:

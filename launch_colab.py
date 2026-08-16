@@ -66,10 +66,17 @@ def validate_runtime() -> None:
         )
     if not torch.cuda.is_available():
         raise RuntimeError("GPU CUDA não encontrada. Selecione T4 no Colab e reinicie o ambiente.")
-    transformers_version = importlib.metadata.version("transformers")
-    if transformers_version != "4.48.3":
+    from packaging.version import Version
+    diffusers_version = Version(diffusers.__version__)
+    if diffusers_version < Version("0.39.0"):
         raise RuntimeError(
-            f"Transformers incompatível: encontrado {transformers_version}, esperado 4.48.3. "
+            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline Anima. "
+            "Reinicie o ambiente Colab e execute esta célula novamente."
+        )
+    transformers_version = Version(importlib.metadata.version("transformers"))
+    if transformers_version < Version("4.51.0"):
+        raise RuntimeError(
+            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para Qwen3/Anima. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     print(

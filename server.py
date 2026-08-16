@@ -640,19 +640,22 @@ class GeneratorEngine:
             repo_id = str(spec.get("diffusers_repo") or os.environ.get("ANIMA_DIFFUSERS_REPO", "")).strip()
             if not repo_id:
                 raise RuntimeError("Configure ANIMA_DIFFUSERS_REPO com um repositório Diffusers Anima antes de gerar.")
-            from diffusers import DiffusionPipeline
             try:
-                # `device_map="cuda"` não é uma estratégia válida para o
-                # dispatch do Accelerate; em uma T4, carregamos em fp16 e
-                # movemos explicitamente a pipeline para CUDA.
-                self.pipe = DiffusionPipeline.from_pretrained(
-                    repo_id,
-                    torch_dtype=torch.float16,
-                    use_safetensors=True,
-                )
+                # Anima não é uma pipeline SDXL clássica. Desde Diffusers
+                # 0.39, o repositório oficial é carregado pela pipeline
+                # modular e seus componentes são materializados explicitamente.
+                from diffusers import ModularPipeline
+            except ImportError as error:
+                raise RuntimeError(
+                    "O runtime não possui suporte à pipeline modular do Anima. "
+                    "Reexecute o inicializador para instalar Diffusers 0.39.0+."
+                ) from error
+            try:
+                # A T4 é mais segura com FP16; o checkpoint original é BF16,
+                # mas o Diffusers faz a conversão dos componentes ao carregar.
+                self.pipe = ModularPipeline.from_pretrained(repo_id)
+                self.pipe.load_components(dtype=torch.float16)
                 self.pipe.to("cuda")
-                if getattr(self.pipe, "vae", None) is not None:
-                    self.pipe.vae.enable_slicing()
                 self.img_pipe = None
                 self.loaded_model_id = spec["id"]
                 return

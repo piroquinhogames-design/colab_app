@@ -14,7 +14,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 
 O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O engine Anima e o repositório Diffusers são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
-A instalação usa a matriz testada de **Transformers 4.48.3**, **Tokenizers 0.21.0**, **Diffusers 0.32.2**, **Accelerate 1.3.0**, **Hugging Face Hub 0.28.1**, **PEFT 0.17.0** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
+A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Diffusers 0.39.0**, **Accelerate 1.3.0+**, **Hugging Face Hub 0.34.0+**, **PEFT 0.17.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 
 > Se uma sessão anterior instalou uma versão incompatível de PyTorch, use **Ambiente de execução → Desconectar e excluir ambiente de execução** antes de executar o setup novamente.
 
@@ -26,9 +26,9 @@ O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferec
 
 ## Modelo padrão: Nova EXAnime AM / Anima
 
-O perfil inicial é **Nova EXAnime AM**, obtido do modelo Civitai `2856434`, versão `3226184`, com base declarada como **Anima**. A família Anima não deve ser enviada ao `StableDiffusionXLPipeline`: ela possui arquitetura própria e usa um engine separado. Por esse motivo, o backend marca o perfil como `engine=anima` e carrega a pipeline Diffusers Anima padronizada, em vez de tentar tratar o arquivo como SDXL e falhar silenciosamente.
+O perfil inicial é **Nova EXAnime AM**, obtido do modelo Civitai `2856434`, versão `3226184`, com base declarada como **Anima**. A família Anima não deve ser enviada ao `StableDiffusionXLPipeline`: ela possui arquitetura própria e usa um engine separado. Por esse motivo, o backend marca o perfil como `engine=anima` e carrega o repositório pela `ModularPipeline` do Diffusers 0.39.0, em vez de tentar tratar o arquivo como SDXL ou procurar um `model_index.json` de pipeline clássica.
 
-O checkpoint Civitai é usado como referência e download do perfil. O inicializador já define automaticamente `ANIMA_ENGINE=diffusers` e `ANIMA_DIFFUSERS_REPO=circlestone-labs/Anima-Base-v1.0-Diffusers`, portanto o usuário comum não precisa configurar essas variáveis. Usuários avançados ainda podem substituí-las antes de executar o inicializador, caso tenham um engine Diffusers Anima diferente.
+O checkpoint Civitai é usado como referência e download do perfil. O inicializador já define automaticamente `ANIMA_ENGINE=diffusers` e `ANIMA_DIFFUSERS_REPO=circlestone-labs/Anima-Base-v1.0-Diffusers`, portanto o usuário comum não precisa configurar essas variáveis. Em uma T4, o backend materializa os componentes em FP16 e os move explicitamente para CUDA. Usuários avançados ainda podem substituí-las antes de executar o inicializador, caso tenham um engine Diffusers Anima diferente.
 
 ## Configurações, famílias e presets
 
