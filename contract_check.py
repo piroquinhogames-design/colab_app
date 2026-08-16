@@ -247,15 +247,18 @@ def main() -> None:
         original_sha256 = server.hashlib.sha256
         hashcash_challenge = "1:192:unused:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         try:
-            class TailDigest:
+            class PrefixDigest:
                 def digest(self):
-                    return (b"\xff" * 28) + b"\x00\x00\x00\x00"
-            server.hashlib.sha256 = lambda _payload: TailDigest()
+                    return b"\x00\x00\x00\x00" + (b"\xff" * 28)
+            server.hashlib.sha256 = lambda _payload: PrefixDigest()
             protocol_proof = server.MegaArchive._solve_hashcash(
                 "1:0:unused:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
             )
             if not protocol_proof.startswith("1:AAAAAAAA") or not protocol_proof.endswith(":AAAAAA"):
-                raise AssertionError("A prova Hashcash deve usar os quatro bytes finais e nonce Base64 URL-safe")
+                raise AssertionError("A prova Hashcash deve usar os quatro bytes iniciais e nonce Base64 URL-safe")
+            urlsafe_proof = server.MegaArchive._solve_hashcash("1:0:unused:____")
+            if not urlsafe_proof.startswith("1:____:"):
+                raise AssertionError("O seed Hashcash deve aceitar Base64 URL-safe")
             server.hashlib.sha256 = original_sha256
             solved_challenges = []
             server.MegaArchive._solve_hashcash = staticmethod(

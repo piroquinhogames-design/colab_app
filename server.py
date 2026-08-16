@@ -227,9 +227,9 @@ class MegaArchive:
             work[offset : offset + len(token)] = token
         while True:
             digest = hashlib.sha256(work).digest()
-            # O cliente público compatível interpreta os quatro bytes finais do SHA-256
+            # O cliente público compatível interpreta os quatro bytes iniciais do SHA-256
             # como inteiro big-endian (equivalente ao reverse + UInt32 no .NET).
-            if int.from_bytes(digest[-4:], "big") <= threshold:
+            if int.from_bytes(digest[:4], "big") <= threshold:
                 nonce = base64.urlsafe_b64encode(bytes(work[:4])).rstrip(b"=").decode("ascii")
                 return f"1:{parts[3]}:{nonce}"
             cursor = 0
