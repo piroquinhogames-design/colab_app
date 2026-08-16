@@ -167,7 +167,7 @@ def main() -> None:
             raise AssertionError("A mensagem MEGA não pode expor a senha")
     finally:
         server.Mega = original_mega
-        server.MegaArchive._login_with_http_adapter = original_login_adapter
+        server.MegaArchive._login_with_http_adapter = staticmethod(original_login_adapter)
         if original_email is None: os.environ.pop("MEGA_EMAIL", None)
         else: os.environ["MEGA_EMAIL"] = original_email
         if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
@@ -194,7 +194,7 @@ def main() -> None:
             raise AssertionError("Reconexão bem-sucedida deve manter o arquivo MEGA disponível")
     finally:
         server.Mega = original_mega
-        server.MegaArchive._login_with_http_adapter = original_login_adapter
+        server.MegaArchive._login_with_http_adapter = staticmethod(original_login_adapter)
         if original_email is None: os.environ.pop("MEGA_EMAIL", None)
         else: os.environ["MEGA_EMAIL"] = original_email
         if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
@@ -219,9 +219,25 @@ def main() -> None:
             server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
             raise AssertionError("Resposta HTTP vazia deve falhar antes do parse JSON")
         except server.MegaHttpError as error:
-            if "HTTP 200; resposta vazia" not in str(error):
-                raise AssertionError("O adaptador deve informar status HTTP para resposta vazia")
-        server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or HttpResponse(200, "[{}]"))
+            if "operação us; HTTP 200; resposta vazia na repetição direta; resposta com 0 bytes" not in str(error):
+                raise AssertionError("O adaptador deve informar status e operação para resposta vazia")
+        if len(request_log) != 2 or request_log[-1][1]["headers"].get("Accept-Encoding") != "identity":
+            raise AssertionError("Resposta vazia deve tentar uma conexão direta sem compressão")
+
+        def assert_diagnostic(response, expected: str) -> None:
+            server.requests.post = lambda *args, **kwargs: HttpResponse(response.status_code, response.text)
+            try:
+                server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
+                raise AssertionError("Resposta HTTP inválida deve falhar")
+            except server.MegaHttpError as error:
+                if expected not in str(error):
+                    raise AssertionError(f"Diagnóstico HTTP incompleto: {error}")
+
+        assert_diagnostic(HttpResponse(503, "offline"), "operação us; HTTP 503; status não-2xx; resposta com 7 bytes")
+        assert_diagnostic(HttpResponse(200, "not-json"), "operação us; HTTP 200; resposta não JSON; resposta com 8 bytes")
+        assert_diagnostic(HttpResponse(200, "[]"), "operação us; HTTP 200; formato JSON inesperado; resposta com 2 bytes")
+        response_sequence = iter([HttpResponse(200, ""), HttpResponse(200, "[{}]")])
+        server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or next(response_sequence))
         server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
         if not request_log or request_log[-1][1]["headers"]["Content-Type"] != "application/json":
             raise AssertionError("O adaptador MEGA deve enviar JSON com cabeçalho explícito")
@@ -315,7 +331,58 @@ def main() -> None:
         if reconnect_calls["count"] != 1:
             raise AssertionError("Bootstrap e sincronização devem reutilizar a sessão MEGA autenticada")
     finally:
-        server.MegaArchive._login_with_http_adapter = original_login_adapter
+        server.MegaArchive._login_with_http_adapter = staticmethod(original_login_adapter)
+        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
+        else: os.environ["MEGA_EMAIL"] = original_email
+        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
+        else: os.environ["MEGA_PASSWORD"] = original_password
+
+    class HttpBackedRemoteMega(FakeMegaClient):
+        def __init__(self):
+            self.schema, self.domain, self.sequence_num = "https", "mega.test", 13
+            self.timeout, self.sid = 1, None
+        def login(self, *_args):
+            self._api_request({"a": "us"})
+            return self
+
+    original_archive = server.archive
+    original_manager_archive = server.manager.archive
+    original_jobs = dict(server.manager.jobs)
+    fallback_responses = iter([HttpResponse(200, ""), HttpResponse(200, "[{}]")])
+    fallback_request_log = []
+    original_email = os.environ.get("MEGA_EMAIL")
+    original_password = os.environ.get("MEGA_PASSWORD")
+    try:
+        os.environ["MEGA_EMAIL"] = "user@example.invalid"
+        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
+        server.Mega = HttpBackedRemoteMega
+        server.requests.post = lambda *args, **kwargs: (
+            fallback_request_log.append((args, kwargs)) or next(fallback_responses)
+        )
+        fallback_archive = server.MegaArchive()
+        server.archive = fallback_archive
+        server.manager.archive = fallback_archive
+        server.manager.jobs.clear()
+        image_path.unlink(missing_ok=True)
+        fallback_bootstrap = client.get("/api/bootstrap")
+        assert_equal(
+            fallback_bootstrap.get_json()["last_settings"],
+            remembered,
+            f"Fallback HTTP deve restaurar o último prompt no bootstrap; arquivo={fallback_archive.available}; erro={fallback_archive.error}",
+        )
+        fallback_sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
+        assert_equal(fallback_sync.get_json()["restored"], 1, "Fallback HTTP deve restaurar o manifesto remoto")
+        fallback_image = client.get("/api/history/job-contract/image")
+        assert_equal(fallback_image.get_data(), b"fake-png-bytes", "Fallback HTTP deve recuperar o PNG remoto")
+        if len(fallback_request_log) != 2 or fallback_request_log[-1][1]["headers"].get("Connection") != "close":
+            raise AssertionError("Bootstrap deve usar o fallback HTTP direto após uma resposta vazia")
+    finally:
+        server.Mega = original_mega
+        server.requests.post = original_post
+        server.archive = original_archive
+        server.manager.archive = original_manager_archive
+        server.manager.jobs.clear()
+        server.manager.jobs.update(original_jobs)
         if original_email is None: os.environ.pop("MEGA_EMAIL", None)
         else: os.environ["MEGA_EMAIL"] = original_email
         if original_password is None: os.environ.pop("MEGA_PASSWORD", None)

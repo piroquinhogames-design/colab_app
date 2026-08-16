@@ -216,30 +216,55 @@ class MegaArchive:
             if getattr(instance, "sid", None):
                 params["sid"] = instance.sid
             payload = data if isinstance(data, list) else [data]
+            operation = payload[0].get("a", "desconhecida") if isinstance(payload[0], dict) else "desconhecida"
+            url = f"{instance.schema}://g.api.{instance.domain}/cs"
+            request_args = {
+                "params": params,
+                "data": json.dumps(payload),
+                "timeout": getattr(instance, "timeout", 160),
+            }
+
+            def protocol_error(response, body: str, reason: str) -> MegaHttpError:
+                return MegaHttpError(
+                    f"operação {operation}; HTTP {response.status_code}; {reason}; resposta com {len(body)} bytes"
+                )
+
             response = requests.post(
-                f"{instance.schema}://g.api.{instance.domain}/cs",
-                params=params,
-                data=json.dumps(payload),
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Illustrious-LoRA-Studio/1.0",
-                },
-                timeout=getattr(instance, "timeout", 160),
+                url,
+                **request_args,
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
             )
             body = response.text or ""
             if response.status_code < 200 or response.status_code >= 300:
-                raise MegaHttpError(f"HTTP {response.status_code}; resposta com {len(body)} bytes")
+                raise protocol_error(response, body, "status não-2xx")
             if not body.strip():
-                raise MegaHttpError(f"HTTP {response.status_code}; resposta vazia")
+                # Alguns proxies de notebooks respondem 200 com corpo vazio em conexões
+                # reutilizadas. A repetição usa conexão fechada, sem compressão e sem cache.
+                response = requests.post(
+                    url,
+                    **request_args,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        "Accept-Encoding": "identity",
+                        "Cache-Control": "no-cache",
+                        "Pragma": "no-cache",
+                        "Connection": "close",
+                    },
+                )
+                body = response.text or ""
+                if response.status_code < 200 or response.status_code >= 300:
+                    raise protocol_error(response, body, "status não-2xx na repetição direta")
+                if not body.strip():
+                    raise protocol_error(response, body, "resposta vazia na repetição direta")
             try:
                 decoded = json.loads(body)
             except json.JSONDecodeError as exc:
-                raise MegaHttpError(f"HTTP {response.status_code}; resposta não JSON com {len(body)} bytes") from exc
+                raise protocol_error(response, body, "resposta não JSON") from exc
             if isinstance(decoded, int):
                 return decoded
             if not isinstance(decoded, list) or not decoded:
-                raise MegaHttpError(f"HTTP {response.status_code}; formato JSON inesperado")
+                raise protocol_error(response, body, "formato JSON inesperado")
             return decoded[0]
 
         client._api_request = types.MethodType(api_request, client)
