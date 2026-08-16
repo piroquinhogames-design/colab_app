@@ -30,6 +30,7 @@ os.environ.update({
 })
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import server  # noqa: E402
+import launch_colab  # noqa: E402
 if not hasattr(asyncio, "coroutine"):
     raise AssertionError("O adaptador de compatibilidade Python 3.12 não foi aplicado")
 
@@ -58,6 +59,23 @@ def main() -> None:
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
+
+    isolated_root = Path(tempfile.mkdtemp(prefix="illustrious-venv-contract-"))
+    original_app_dir, original_venv_dir, original_venv_python = (
+        launch_colab.APP_DIR, launch_colab.VENV_DIR, launch_colab.VENV_PYTHON,
+    )
+    try:
+        (isolated_root / "requirements.txt").write_text("", encoding="utf-8")
+        launch_colab.APP_DIR = isolated_root
+        launch_colab.VENV_DIR = isolated_root / ".venv"
+        launch_colab.VENV_PYTHON = launch_colab.VENV_DIR / "bin" / "python"
+        launch_colab.install_requirements()
+        if not launch_colab.VENV_PYTHON.exists():
+            raise AssertionError("O inicializador deve criar o interpretador isolado antes da instalação")
+    finally:
+        launch_colab.APP_DIR, launch_colab.VENV_DIR, launch_colab.VENV_PYTHON = (
+            original_app_dir, original_venv_dir, original_venv_python,
+        )
 
     anonymous = server.app.test_client()
     assert_equal(anonymous.get("/api/history").status_code, 401, "Histórico deve exigir sessão")
