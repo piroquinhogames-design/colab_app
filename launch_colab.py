@@ -23,6 +23,8 @@ import requests
 APP_DIR = Path(__file__).resolve().parent
 PORT = os.environ.get("PORT", "7860")
 TUNNEL_PATTERN = re.compile(r"https://[-a-z0-9]+\.trycloudflare\.com", re.I)
+VENV_DIR = Path(os.environ.get("STUDIO_VENV", "/content/illustrious-studio/.venv"))
+VENV_PYTHON = VENV_DIR / "bin" / "python"
 
 
 def ask_secret(name: str, prompt: str, required: bool = True) -> None:
@@ -36,12 +38,16 @@ def ask_secret(name: str, prompt: str, required: bool = True) -> None:
 
 
 def install_requirements() -> None:
-    print("[setup] Instalando dependências Python do estúdio…")
+    if not VENV_PYTHON.exists():
+        print("[setup] Criando ambiente isolado do estúdio…")
+        subprocess.run([
+            sys.executable, "-m", "venv", "--system-site-packages", str(VENV_DIR),
+        ], check=True)
+    print("[setup] Instalando dependências somente no ambiente isolado do estúdio…")
     subprocess.run([
-        sys.executable, "-m", "pip", "install", "-q", "--upgrade",
-        "--upgrade-strategy", "only-if-needed", "-r", str(APP_DIR / "requirements.txt"),
+        str(VENV_PYTHON), "-m", "pip", "install", "-q", "--upgrade-strategy", "only-if-needed",
+        "-r", str(APP_DIR / "requirements.txt"),
     ], check=True)
-    subprocess.run([sys.executable, "-m", "pip", "check"], check=True)
 
 
 def validate_runtime() -> None:
@@ -112,7 +118,7 @@ def main() -> None:
     cloudflared = ensure_cloudflared()
     print("[setup] Iniciando Illustrious LoRA Studio na GPU atual…")
     server = subprocess.Popen(
-        [sys.executable, "server.py"], cwd=APP_DIR, text=True,
+        [str(VENV_PYTHON), "server.py"], cwd=APP_DIR, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy(),
     )
     threading.Thread(target=pipe_output, args=(server, "server"), daemon=True).start()

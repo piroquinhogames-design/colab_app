@@ -44,9 +44,17 @@ def main() -> None:
     requirements = (package_root / "requirements.txt").read_text(encoding="utf-8")
     if "peft==0.17.0" not in requirements:
         raise AssertionError("O pacote deve fixar a versão PEFT compatível com carregamento de LoRA")
+    if any(line.strip().startswith("torch") for line in requirements.splitlines()):
+        raise AssertionError("O pacote não deve atualizar o PyTorch/CUDA que já vem com o Colab")
     launcher_source = (package_root / "launch_colab.py").read_text(encoding="utf-8")
     if "def validate_runtime()" not in launcher_source or "PEFT incompatível" not in launcher_source:
         raise AssertionError("O inicializador deve validar PEFT antes de iniciar o servidor")
+    if '"pip", "check"' in launcher_source or '"--upgrade",' in launcher_source:
+        raise AssertionError("O inicializador não deve falhar por conflitos globais nem forçar upgrades do Colab")
+    if '"-m", "venv", "--system-site-packages"' not in launcher_source or "VENV_PYTHON" not in launcher_source:
+        raise AssertionError("O inicializador deve criar um ambiente isolado que reutilize apenas o PyTorch/CUDA do Colab")
+    if '[sys.executable, "-m", "pip"' in launcher_source:
+        raise AssertionError("As dependências do painel não podem ser instaladas no Python global do Colab")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
