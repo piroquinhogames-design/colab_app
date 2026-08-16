@@ -136,22 +136,27 @@ def main() -> None:
     assert_equal(adult_catalog.get_json()["catalog_query"]["nsfw"], "true", "Resposta deve expor o filtro adulto aplicado")
 
     remote: dict[str, bytes] = {}
+    upload_destinations: list[object] = []
     class FakeMegaClient:
         def find(self, name):
             return {"name": name} if name in remote else None
         def destroy(self, node):
             remote.pop(node["name"], None)
-        def upload(self, path, _folder):
+        def upload(self, path, folder):
+            upload_destinations.append(folder)
             remote[Path(path).name] = Path(path).read_bytes()
+            return {"name": Path(path).name}
         def download(self, node, destination):
             output = Path(destination) / node["name"]
             output.write_bytes(remote[node["name"]])
             return str(output)
     archive = server.MegaArchive()
-    archive.available, archive.client, archive.folder = True, FakeMegaClient(), "archive"
+    archive.available, archive.client, archive.folder = True, FakeMegaClient(), {"name": "IllustriousStudio", "h": "folder-node"}
     remembered = {"prompt": "last signal", "negative_prompt": "lowres", "seed": 77, "steps": 30, "guidance": 7.0, "width": 1024, "height": 768, "strength": 0.65, "mode": "text2img", "loras": []}
     if not archive.save_last_settings(remembered):
         raise AssertionError("Últimas preferências devem ser salvas no arquivo MEGA")
+    if not upload_destinations or any(destination != archive.folder for destination in upload_destinations):
+        raise AssertionError("Uploads MEGA devem receber um nó individual da pasta, não uma lista de resultados de find()")
     assert_equal(archive.load_last_settings(), remembered, "Últimas preferências devem ser recuperadas do MEGA")
     server.archive = archive
     restored_bootstrap = client.get("/api/bootstrap")

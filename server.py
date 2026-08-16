@@ -191,35 +191,53 @@ class MegaArchive:
             return
         try:
             self.client = Mega().login(email, password)
-            self.folder = self.client.find(MEGA_FOLDER)
+            found = self.client.find(MEGA_FOLDER)
+            self.folder = self._first_node(found)
             if not self.folder:
-                self.folder = self.client.create_folder(MEGA_FOLDER)
+                self.client.create_folder(MEGA_FOLDER)
+                # mega.py retorna um dicionário no create_folder(), mas upload()
+                # exige o nó remoto (o primeiro item de find()).
+                self.folder = self._first_node(self.client.find(MEGA_FOLDER))
+            if not self.folder:
+                raise RuntimeError(f"A pasta MEGA {MEGA_FOLDER!r} foi criada, mas seu nó não foi localizado")
             self.available = True
             self.error = None
         except Exception as exc:  # credenciais e rede não devem derrubar o servidor
             self.available = False
             self.error = f"Não foi possível conectar ao MEGA: {str(exc)[:180]}"
 
+    @staticmethod
+    def _first_node(value: Any) -> Any:
+        """Normaliza find()/create_folder() para o nó que mega.py.upload espera."""
+        if isinstance(value, (list, tuple)):
+            return value[0] if value else None
+        return value
+
     def _upload(self, path: Path) -> None:
-        if not self.available or not self.client:
-            return
+        if not self.available or not self.client or not self.folder:
+            raise RuntimeError("MEGA não está conectado a uma pasta de destino válida")
         with self.lock:
-            existing = self.client.find(path.name)
+            existing = self._first_node(self.client.find(path.name))
             if existing:
                 try:
                     self.client.destroy(existing)
                 except Exception:
                     pass
-            self.client.upload(str(path), self.folder)
+            uploaded = self.client.upload(str(path), self.folder)
+            if uploaded is None:
+                raise RuntimeError(f"O cliente MEGA não confirmou o upload de {path.name}")
 
     def save_job(self, job: Job, image_path: Path | None) -> bool:
         if not self.available:
             return False
         metadata_path = OUTPUTS / f"{job.id}.json"
-        metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
         try:
             if image_path and image_path.exists():
                 self._upload(image_path)
+            # Reescreve o manifesto depois do upload da imagem para que o estado
+            # persistido também registre a sincronização concluída.
+            job.mega_synced = True
+            metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
             self._upload(metadata_path)
             return True
         except Exception as exc:
