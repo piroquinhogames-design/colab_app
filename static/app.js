@@ -230,6 +230,9 @@ async function refreshHistory({sync = false} = {}) {
     renderHistory(payload.items || []);
     $('#queue-readout').textContent = `${(payload.items || []).filter((item) => ['queued', 'running'].includes(item.status)).length} JOBS`;
     if (sync) {
+      if (payload.archive && !payload.archive.available) {
+        throw new Error(payload.archive.error || 'MEGA indisponível para sincronizar o histórico.');
+      }
       log(`${payload.restored || 0} manifesto(s) restaurado(s) do MEGA.`);
       toast(`${payload.restored || 0} sinal(is) recuperado(s) do MEGA.`);
     }
@@ -310,6 +313,9 @@ async function bootstrap() {
     restoreLastSettings(payload.last_settings);
     if (payload.last_settings_source === 'mega') log('Manifesto de preferências recuperado do MEGA.');
     renderHistory(payload.jobs || []);
+    if (!payload.archive.available && !(payload.jobs || []).some((item) => item.status === 'completed')) {
+      $('#history-grid').innerHTML = `<div class="empty-history archive-unavailable"><span>MEGA // OFFLINE</span><p>${escapeHtml(payload.archive.error || 'Conecte o MEGA para recuperar imagens persistentes.')}</p></div>`;
+    }
     const active = (payload.jobs || []).find((item) => ['queued', 'running'].includes(item.status));
     if (active) { state.activeJobId = active.id; setTelemetry(active); state.pollTimer = setInterval(pollJob, 1200); }
     else setTelemetry(null);

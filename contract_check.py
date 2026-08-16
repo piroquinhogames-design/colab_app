@@ -142,6 +142,36 @@ def main() -> None:
     assert_equal(called["params"]["nsfw"], "true", "Catálogo adulto deve solicitar nsfw=true")
     assert_equal(adult_catalog.get_json()["catalog_query"]["nsfw"], "true", "Resposta deve expor o filtro adulto aplicado")
 
+    empty_response = server.MegaArchive._connection_error(ValueError("Expecting value: line 1 column 1 (char 0)"))
+    if "resposta vazia" not in empty_response or "MEGA_EMAIL/MEGA_PASSWORD" not in empty_response:
+        raise AssertionError("Falha de autenticação vazia deve gerar diagnóstico acionável sem credenciais")
+    missing_credentials = server.MegaArchive()
+    missing_credentials.connect()
+    if missing_credentials.available or "MEGA_EMAIL" not in (missing_credentials.error or ""):
+        raise AssertionError("Credenciais ausentes devem manter MEGA indisponível com instrução segura")
+    original_mega = server.Mega
+    original_email = os.environ.get("MEGA_EMAIL")
+    original_password = os.environ.get("MEGA_PASSWORD")
+    class InvalidMega:
+        def login(self, *_args, **_kwargs):
+            raise ValueError("Invalid credentials for MEGA")
+    try:
+        server.Mega = InvalidMega
+        os.environ["MEGA_EMAIL"] = "user@example.invalid"
+        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
+        invalid_credentials = server.MegaArchive()
+        invalid_credentials.connect()
+        if invalid_credentials.available or "Invalid credentials" not in (invalid_credentials.error or ""):
+            raise AssertionError("Credenciais inválidas devem gerar erro explícito sem ativar o arquivo")
+        if "not-a-real-password" in (invalid_credentials.error or ""):
+            raise AssertionError("A mensagem MEGA não pode expor a senha")
+    finally:
+        server.Mega = original_mega
+        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
+        else: os.environ["MEGA_EMAIL"] = original_email
+        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
+        else: os.environ["MEGA_PASSWORD"] = original_password
+
     remote: dict[str, bytes] = {}
     upload_destinations: list[object] = []
     class FakeMegaClient:

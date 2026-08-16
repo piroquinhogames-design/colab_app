@@ -183,9 +183,21 @@ class MegaArchive:
         self.error: str | None = None
         self.lock = threading.Lock()
 
+    @staticmethod
+    def _connection_error(exc: Exception) -> str:
+        detail = str(exc).strip()
+        if isinstance(exc, json.JSONDecodeError) or "Expecting value" in detail:
+            return "O MEGA devolveu uma resposta vazia ao autenticar. Verifique MEGA_EMAIL/MEGA_PASSWORD e tente uma nova sessão; isso não indica histórico vazio."
+        if not detail:
+            return "O MEGA encerrou a autenticação sem informar o motivo. Verifique as credenciais e a conexão da sessão Colab."
+        return f"Não foi possível conectar ao MEGA: {detail[:180]}"
+
     def connect(self) -> None:
         email = os.environ.get("MEGA_EMAIL", "").strip()
         password = os.environ.get("MEGA_PASSWORD", "")
+        self.available = False
+        self.client = None
+        self.folder = None
         if not email or not password:
             self.error = "Configure MEGA_EMAIL e MEGA_PASSWORD para ativar o arquivo persistente."
             return
@@ -204,7 +216,9 @@ class MegaArchive:
             self.error = None
         except Exception as exc:  # credenciais e rede não devem derrubar o servidor
             self.available = False
-            self.error = f"Não foi possível conectar ao MEGA: {str(exc)[:180]}"
+            self.client = None
+            self.folder = None
+            self.error = self._connection_error(exc)
 
     @staticmethod
     def _first_node(value: Any) -> Any:
@@ -743,7 +757,11 @@ def history():
 @csrf_required
 def sync_history():
     restored = manager.restore()
-    return jsonify({"items": manager.public_jobs(), "restored": restored})
+    return jsonify({
+        "items": manager.public_jobs(),
+        "restored": restored,
+        "archive": {"available": archive.available, "error": archive.error, "folder": MEGA_FOLDER},
+    })
 
 
 @app.route("/api/history/<job_id>/image")
