@@ -218,24 +218,17 @@ function imageCard(job) {
 
 function renderHistory(items) {
   const grid = $('#history-grid');
-  const complete = items.filter((item) => item.status === 'completed' && item.filename);
+  const complete = items.filter((item) => item.status === 'completed' && (item.filename || item.id));
   grid.innerHTML = complete.length ? complete.map(imageCard).join('') : '<div class="empty-history"><span>///</span><p>O arquivo ainda não contém sinais gerados.</p></div>';
 }
 
 async function refreshHistory({sync = false} = {}) {
   try {
-    const payload = sync
-      ? await api('/api/history/sync', {method: 'POST'})
-      : await api('/api/history');
+    const payload = await api(sync ? '/api/history/sync' : '/api/history', sync ? {method: 'POST'} : {});
     renderHistory(payload.items || []);
     $('#queue-readout').textContent = `${(payload.items || []).filter((item) => ['queued', 'running'].includes(item.status)).length} JOBS`;
-    if (sync) {
-      if (payload.archive && !payload.archive.available) {
-        throw new Error(payload.archive.error || 'MEGA indisponível para sincronizar o histórico.');
-      }
-      log(`${payload.restored || 0} manifesto(s) restaurado(s) do MEGA.`);
-      toast(`${payload.restored || 0} sinal(is) recuperado(s) do MEGA.`);
-    }
+    if (sync && payload.archive && !payload.archive.available) toast(payload.archive.error || 'MEGA indisponível para sincronização.', true);
+    else if (sync) toast(`${payload.restored || 0} registro(s) restaurado(s) do MEGA.`);
   } catch (error) { toast(error.message, true); }
 }
 
@@ -313,9 +306,8 @@ async function bootstrap() {
     restoreLastSettings(payload.last_settings);
     if (payload.last_settings_source === 'mega') log('Manifesto de preferências recuperado do MEGA.');
     renderHistory(payload.jobs || []);
-    if (!payload.archive.available && !(payload.jobs || []).some((item) => item.status === 'completed')) {
-      $('#history-grid').innerHTML = `<div class="empty-history archive-unavailable"><span>MEGA // OFFLINE</span><p>${escapeHtml(payload.archive.error || 'Conecte o MEGA para recuperar imagens persistentes.')}</p></div>`;
-    }
+    // Releitura após o bootstrap cobre o caso em que a sessão MEGA acabou de conectar.
+    await refreshHistory();
     const active = (payload.jobs || []).find((item) => ['queued', 'running'].includes(item.status));
     if (active) { state.activeJobId = active.id; setTelemetry(active); state.pollTimer = setInterval(pollJob, 1200); }
     else setTelemetry(null);
@@ -340,7 +332,7 @@ function bindEvents() {
   $('#search-catalog').addEventListener('click', () => { state.catalogCursor = null; loadCatalog(); });
   $('#catalog-adult').addEventListener('change', () => { state.catalogCursor = null; $('#next-catalog').disabled = true; });
   $('#next-catalog').addEventListener('click', () => loadCatalog({append: true}));
-  $('#refresh-history').addEventListener('click', () => { refreshHistory({sync: true}); });
+  $('#refresh-history').addEventListener('click', () => { refreshHistory({sync: true}); log('Solicitando sincronização do arquivo MEGA.'); });
   $('#logout').addEventListener('click', async () => { try { await api('/api/logout', {method: 'POST'}); } finally { window.location.assign('/'); } });
   wireParameterReadouts();
   setMode('text2img');

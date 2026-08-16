@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import asyncio
 import functools
-import hashlib
 import hmac
 import json
 import os
@@ -174,10 +173,6 @@ class Job:
         return data
 
 
-class MegaHttpError(RuntimeError):
-    """Falha de transporte MEGA sem incluir cabeçalhos, corpo ou segredos."""
-
-
 class MegaArchive:
     """Adaptador mínimo que mantém imagens e metadados no mesmo diretório MEGA."""
 
@@ -187,185 +182,29 @@ class MegaArchive:
         self.available = False
         self.error: str | None = None
         self.lock = threading.Lock()
-        self.connection_lock = threading.Lock()
 
-    @staticmethod
-    def _connection_error(exc: Exception) -> str:
-        detail = str(exc).strip()
-        if isinstance(exc, MegaHttpError):
-            return f"O login MEGA não retornou JSON válido ({detail}). Verifique a rede da sessão Colab e tente novamente."
-        if isinstance(exc, json.JSONDecodeError) or "Expecting value" in detail:
-            return "O MEGA devolveu uma resposta vazia ao autenticar. Verifique MEGA_EMAIL/MEGA_PASSWORD e tente uma nova sessão; isso não indica histórico vazio."
-        if not detail:
-            return "O MEGA encerrou a autenticação sem informar o motivo. Verifique as credenciais e a conexão da sessão Colab."
-        return f"Não foi possível conectar ao MEGA: {detail[:180]}"
-
-    @staticmethod
-    def _solve_hashcash(challenge: str) -> str:
-        """Resolve o desafio PoW retornado pelo Web API do MEGA sem registrar o token."""
-        parts = challenge.split(":")
-        if len(parts) != 4 or parts[0] != "1":
-            raise ValueError("desafio X-Hashcash não suportado")
-        try:
-            easiness = int(parts[1])
-        except ValueError as exc:
-            raise ValueError("dificuldade X-Hashcash inválida") from exc
-        if not 0 <= easiness < 256 or not parts[3]:
-            raise ValueError("desafio X-Hashcash inválido")
-        try:
-            token = base64.urlsafe_b64decode(parts[3] + "=" * (-len(parts[3]) % 4))
-        except (ValueError, base64.binascii.Error) as exc:
-            raise ValueError("token X-Hashcash inválido") from exc
-        if len(token) > 48:
-            raise ValueError("token X-Hashcash maior que o formato suportado")
-
-        base = ((easiness & 63) << 1) + 1
-        shifts = (easiness >> 6) * 7 + 3
-        threshold = base << shifts
-        work = bytearray(4 + 262144 * 48)
-        for offset in range(4, len(work), 48):
-            work[offset : offset + len(token)] = token
-        while True:
-            digest = hashlib.sha256(work).digest()
-            # O cliente público compatível interpreta os quatro bytes iniciais do SHA-256
-            # como inteiro big-endian (equivalente ao reverse + UInt32 no .NET).
-            if int.from_bytes(digest[:4], "big") <= threshold:
-                nonce = base64.urlsafe_b64encode(bytes(work[:4])).rstrip(b"=").decode("ascii")
-                return f"1:{parts[3]}:{nonce}"
-            cursor = 0
-            while True:
-                work[cursor] = (work[cursor] + 1) & 0xFF
-                if work[cursor]:
-                    break
-                cursor += 1
-                if cursor >= 4:
-                    raise RuntimeError("espaço de nonce X-Hashcash esgotado")
-
-    @staticmethod
-    def _login_with_http_adapter(email: str, password: str):
-        """Usa o protocolo da biblioteca, mas valida a resposta HTTP antes do JSON.
-
-        Algumas versões de ``mega.py`` chamam ``json.loads(req.text)`` diretamente.
-        Quando o Colab recebe uma página vazia/intermediária, isso oculta o status real
-        em ``Expecting value``. O adaptador preserva o cliente para criptografia e nós,
-        mas torna o transporte diagnosticável sem registrar resposta ou credenciais.
-        """
-        client = Mega()
-
-        def api_request(instance, data):
-            params = {"id": instance.sequence_num}
-            instance.sequence_num += 1
-            if getattr(instance, "sid", None):
-                params["sid"] = instance.sid
-            payload = data if isinstance(data, list) else [data]
-            operation = payload[0].get("a", "desconhecida") if isinstance(payload[0], dict) else "desconhecida"
-            url = f"{instance.schema}://g.api.{instance.domain}/cs"
-            request_args = {
-                "params": params,
-                "data": json.dumps(payload),
-                "timeout": getattr(instance, "timeout", 160),
-            }
-
-            def protocol_error(response, body: str, reason: str) -> MegaHttpError:
-                return MegaHttpError(
-                    f"operação {operation}; HTTP {response.status_code}; {reason}; resposta com {len(body)} bytes"
-                )
-
-            headers = {"Accept": "application/json", "Content-Type": "application/json"}
-            response = requests.post(
-                url,
-                **request_args,
-                headers=headers,
-            )
-            body = response.text or ""
-            challenge = (getattr(response, "headers", {}) or {}).get("X-Hashcash", "")
-            if response.status_code == 402 and challenge:
-                try:
-                    proof = MegaArchive._solve_hashcash(challenge)
-                except (ValueError, RuntimeError) as exc:
-                    raise protocol_error(response, body, "desafio X-Hashcash inválido") from exc
-                response = requests.post(
-                    url,
-                    **request_args,
-                    headers={**headers, "X-Hashcash": proof},
-                )
-                body = response.text or ""
-            if response.status_code < 200 or response.status_code >= 300:
-                raise protocol_error(response, body, "status não-2xx")
-            if not body.strip():
-                # Alguns proxies de notebooks respondem 200 com corpo vazio em conexões
-                # reutilizadas. A repetição usa conexão fechada, sem compressão e sem cache.
-                response = requests.post(
-                    url,
-                    **request_args,
-                    headers={
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                        "Accept-Encoding": "identity",
-                        "Cache-Control": "no-cache",
-                        "Pragma": "no-cache",
-                        "Connection": "close",
-                    },
-                )
-                body = response.text or ""
-                if response.status_code < 200 or response.status_code >= 300:
-                    raise protocol_error(response, body, "status não-2xx na repetição direta")
-                if not body.strip():
-                    raise protocol_error(response, body, "resposta vazia na repetição direta")
-            try:
-                decoded = json.loads(body)
-            except json.JSONDecodeError as exc:
-                raise protocol_error(response, body, "resposta não JSON") from exc
-            if isinstance(decoded, int):
-                return decoded
-            if not isinstance(decoded, list) or not decoded:
-                raise protocol_error(response, body, "formato JSON inesperado")
-            return decoded[0]
-
-        client._api_request = types.MethodType(api_request, client)
-        return client.login(email, password)
-
-    def connect(self, attempts: int = 3, retry_delay: float = 1.0) -> bool:
+    def connect(self) -> None:
         email = os.environ.get("MEGA_EMAIL", "").strip()
         password = os.environ.get("MEGA_PASSWORD", "")
         if not email or not password:
-            self.available = False
-            self.client = None
-            self.folder = None
             self.error = "Configure MEGA_EMAIL e MEGA_PASSWORD para ativar o arquivo persistente."
-            return False
-        last_error: Exception | None = None
-        with self.connection_lock:
+            return
+        try:
+            self.client = Mega().login(email, password)
+            found = self.client.find(MEGA_FOLDER)
+            self.folder = self._first_node(found)
+            if not self.folder:
+                self.client.create_folder(MEGA_FOLDER)
+                # mega.py retorna um dicionário no create_folder(), mas upload()
+                # exige o nó remoto (o primeiro item de find()).
+                self.folder = self._first_node(self.client.find(MEGA_FOLDER))
+            if not self.folder:
+                raise RuntimeError(f"A pasta MEGA {MEGA_FOLDER!r} foi criada, mas seu nó não foi localizado")
+            self.available = True
+            self.error = None
+        except Exception as exc:  # credenciais e rede não devem derrubar o servidor
             self.available = False
-            self.client = None
-            self.folder = None
-            for attempt in range(max(1, attempts)):
-                try:
-                    client = self._login_with_http_adapter(email, password)
-                    found = client.find(MEGA_FOLDER)
-                    folder = self._first_node(found)
-                    if not folder:
-                        client.create_folder(MEGA_FOLDER)
-                        # mega.py retorna um dicionário no create_folder(), mas upload()
-                        # exige o nó remoto (o primeiro item de find()).
-                        folder = self._first_node(client.find(MEGA_FOLDER))
-                    if not folder:
-                        raise RuntimeError(f"A pasta MEGA {MEGA_FOLDER!r} foi criada, mas seu nó não foi localizado")
-                    self.client = client
-                    self.folder = folder
-                    self.available = True
-                    self.error = None
-                    return True
-                except Exception as exc:  # credenciais e rede não devem derrubar o servidor
-                    last_error = exc
-                    if attempt < max(1, attempts) - 1:
-                        time.sleep(max(0, retry_delay))
-            self.error = self._connection_error(last_error or RuntimeError("Falha desconhecida no login MEGA"))
-            return False
-
-    def ensure_connected(self) -> bool:
-        """Revalida o arquivo após uma falha inicial sem expor credenciais ao cliente."""
-        return self.available or self.connect()
+            self.error = f"Não foi possível conectar ao MEGA: {str(exc)[:180]}"
 
     @staticmethod
     def _first_node(value: Any) -> Any:
@@ -389,7 +228,7 @@ class MegaArchive:
                 raise RuntimeError(f"O cliente MEGA não confirmou o upload de {path.name}")
 
     def save_job(self, job: Job, image_path: Path | None) -> bool:
-        if not self.ensure_connected():
+        if not self.available:
             return False
         metadata_path = OUTPUTS / f"{job.id}.json"
         try:
@@ -412,7 +251,7 @@ class MegaArchive:
 
     def save_last_settings(self, settings: dict[str, Any]) -> bool:
         """Substitui o manifesto único do último sinal renderizado no arquivo MEGA."""
-        if not self.ensure_connected():
+        if not self.available:
             return False
         settings_path = OUTPUTS / LAST_SETTINGS_NAME
         payload = {"updated_at": now_iso(), "settings": settings}
@@ -426,12 +265,12 @@ class MegaArchive:
 
     def load_last_settings(self) -> dict[str, Any] | None:
         """Recupera o manifesto único de preferências sem misturá-lo ao histórico de jobs."""
-        if not self.ensure_connected() or not self.client:
+        if not self.available or not self.client:
             return None
         cache = ROOT / "mega-cache"
         cache.mkdir(exist_ok=True)
         try:
-            node = self._first_node(self.client.find(LAST_SETTINGS_NAME))
+            node = self.client.find(LAST_SETTINGS_NAME)
             if not node:
                 return None
             downloaded = self.client.download(node, str(cache))
@@ -447,7 +286,7 @@ class MegaArchive:
 
     @staticmethod
     def _file_nodes(value: Any) -> list[dict[str, Any]]:
-        """Extrai nós de arquivo tanto do mapa plano quanto de árvores retornadas pelo mega.py."""
+        """Extrai arquivos tanto de mapas planos quanto de árvores do mega.py."""
         found: list[dict[str, Any]] = []
         if isinstance(value, dict):
             attributes = value.get("a")
@@ -462,15 +301,14 @@ class MegaArchive:
         return found
 
     def list_remote_metadata(self) -> list[dict[str, Any]]:
-        if not self.ensure_connected() or not self.client:
+        if not self.available or not self.client:
             return []
         cache = ROOT / "mega-cache"
         cache.mkdir(exist_ok=True)
         jobs: list[dict[str, Any]] = []
         try:
             files = self.client.get_files()
-            nodes = self._file_nodes(files)
-            for node in nodes:
+            for node in self._file_nodes(files):
                 name = node.get("a", {}).get("n", "")
                 if name == LAST_SETTINGS_NAME or not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}\.json", name, re.I):
                     continue
@@ -491,10 +329,10 @@ class MegaArchive:
         destination = OUTPUTS / f"{job_id}.png"
         if destination.exists():
             return destination
-        if not self.ensure_connected() or not self.client:
+        if not self.available or not self.client:
             return None
         try:
-            node = self._first_node(self.client.find(destination.name))
+            node = self.client.find(destination.name)
             if node:
                 downloaded = self.client.download(node, str(OUTPUTS))
                 result = Path(downloaded) if downloaded else destination
@@ -651,8 +489,7 @@ class JobManager:
         self.worker = threading.Thread(target=self._run, name="generation-worker", daemon=True)
         self.worker.start()
 
-    def restore(self) -> int:
-        restored_count = 0
+    def restore(self) -> None:
         for data in self.archive.list_remote_metadata():
             try:
                 params = data["params"]
@@ -664,13 +501,11 @@ class JobManager:
                         steps=params["steps"], guidance=params["guidance"], width=params["width"], height=params["height"],
                         strength=params.get("strength", 0.65), mode=params["mode"], loras=loras,
                     ), updated_at=data.get("updated_at"), completed_at=data.get("completed_at"),
-                    filename=data.get("filename") or f"{data['id']}.png", mega_synced=data.get("mega_synced", True), error=data.get("error"), vram_gb=data.get("vram_gb"),
+                    filename=data.get("filename") or f"{data['id']}.png", mega_synced=True, error=data.get("error"), vram_gb=data.get("vram_gb"),
                 )
                 self.jobs[restored.id] = restored
-                restored_count += 1
             except (KeyError, TypeError, ValueError):
                 continue
-        return restored_count
 
     def enqueue(self, params: GenerationParams) -> Job:
         job = Job(id=str(uuid.uuid4()), created_at=now_iso(), status="queued", progress=0, params=params, updated_at=now_iso())
@@ -792,9 +627,8 @@ def logout():
 @app.route("/api/bootstrap")
 @authentication_required
 def bootstrap():
-    archive.ensure_connected()
-    if archive.available:
-        manager.restore()
+    # Restaura manifestos também quando a sessão MEGA já está autenticada.
+    manager.restore()
     last_settings = archive.load_last_settings()
     return jsonify({
         "csrf": session.get("csrf"), "jobs": manager.public_jobs(),
@@ -897,7 +731,7 @@ def get_job(job_id: str):
 @app.route("/api/history")
 @authentication_required
 def history():
-    if request.args.get("sync", "").lower() in {"1", "true", "yes"}:
+    if request.args.get("sync") == "1":
         manager.restore()
     return jsonify({"items": manager.public_jobs()})
 
@@ -905,12 +739,12 @@ def history():
 @app.route("/api/history/sync", methods=["POST"])
 @authentication_required
 @csrf_required
-def sync_history():
-    archive.ensure_connected()
-    restored = manager.restore()
+def history_sync():
+    before = len(manager.jobs)
+    manager.restore()
     return jsonify({
         "items": manager.public_jobs(),
-        "restored": restored,
+        "restored": max(0, len(manager.jobs) - before),
         "archive": {"available": archive.available, "error": archive.error, "folder": MEGA_FOLDER},
     })
 

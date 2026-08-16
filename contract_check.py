@@ -142,150 +142,10 @@ def main() -> None:
     assert_equal(called["params"]["nsfw"], "true", "Catálogo adulto deve solicitar nsfw=true")
     assert_equal(adult_catalog.get_json()["catalog_query"]["nsfw"], "true", "Resposta deve expor o filtro adulto aplicado")
 
-    empty_response = server.MegaArchive._connection_error(ValueError("Expecting value: line 1 column 1 (char 0)"))
-    if "resposta vazia" not in empty_response or "MEGA_EMAIL/MEGA_PASSWORD" not in empty_response:
-        raise AssertionError("Falha de autenticação vazia deve gerar diagnóstico acionável sem credenciais")
-    missing_credentials = server.MegaArchive()
-    missing_credentials.connect()
-    if missing_credentials.available or "MEGA_EMAIL" not in (missing_credentials.error or ""):
-        raise AssertionError("Credenciais ausentes devem manter MEGA indisponível com instrução segura")
-    original_mega = server.Mega
-    original_login_adapter = server.MegaArchive._login_with_http_adapter
-    original_email = os.environ.get("MEGA_EMAIL")
-    original_password = os.environ.get("MEGA_PASSWORD")
-    try:
-        server.MegaArchive._login_with_http_adapter = staticmethod(
-            lambda *_args: (_ for _ in ()).throw(ValueError("Invalid credentials for MEGA"))
-        )
-        os.environ["MEGA_EMAIL"] = "user@example.invalid"
-        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
-        invalid_credentials = server.MegaArchive()
-        invalid_credentials.connect()
-        if invalid_credentials.available or "Invalid credentials" not in (invalid_credentials.error or ""):
-            raise AssertionError("Credenciais inválidas devem gerar erro explícito sem ativar o arquivo")
-        if "not-a-real-password" in (invalid_credentials.error or ""):
-            raise AssertionError("A mensagem MEGA não pode expor a senha")
-    finally:
-        server.Mega = original_mega
-        server.MegaArchive._login_with_http_adapter = staticmethod(original_login_adapter)
-        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
-        else: os.environ["MEGA_EMAIL"] = original_email
-        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
-        else: os.environ["MEGA_PASSWORD"] = original_password
-
-    class ReadyMegaClient:
-        def find(self, _name):
-            return {"name": "IllustriousStudio", "h": "folder-node"}
-    flaky_calls = {"count": 0}
-    def flaky_login(*_args):
-        flaky_calls["count"] += 1
-        if flaky_calls["count"] == 1:
-            raise server.MegaHttpError("HTTP 200; resposta vazia")
-        return ReadyMegaClient()
-    try:
-        server.MegaArchive._login_with_http_adapter = staticmethod(flaky_login)
-        os.environ["MEGA_EMAIL"] = "user@example.invalid"
-        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
-        retry_archive = server.MegaArchive()
-        if not retry_archive.connect(attempts=2, retry_delay=0):
-            raise AssertionError("O MEGA deve recuperar a conexão após uma resposta vazia transitória")
-        assert_equal(flaky_calls["count"], 2, "O login MEGA deve repetir a tentativa transitória")
-        if not retry_archive.available or not retry_archive.ensure_connected():
-            raise AssertionError("Reconexão bem-sucedida deve manter o arquivo MEGA disponível")
-    finally:
-        server.Mega = original_mega
-        server.MegaArchive._login_with_http_adapter = staticmethod(original_login_adapter)
-        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
-        else: os.environ["MEGA_EMAIL"] = original_email
-        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
-        else: os.environ["MEGA_PASSWORD"] = original_password
-
-    class HttpMega:
-        def __init__(self):
-            self.schema, self.domain, self.sequence_num = "https", "mega.test", 7
-            self.timeout, self.sid = 1, None
-        def login(self, *_args):
-            self._api_request({"a": "us"})
-            return self
-    class HttpResponse:
-        def __init__(self, status_code, text, headers=None):
-            self.status_code, self.text = status_code, text
-            self.headers = headers or {}
-    request_log = []
-    original_post = server.requests.post
-    try:
-        server.Mega = HttpMega
-        server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or HttpResponse(200, ""))
-        try:
-            server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
-            raise AssertionError("Resposta HTTP vazia deve falhar antes do parse JSON")
-        except server.MegaHttpError as error:
-            if "operação us; HTTP 200; resposta vazia na repetição direta; resposta com 0 bytes" not in str(error):
-                raise AssertionError("O adaptador deve informar status e operação para resposta vazia")
-        if len(request_log) != 2 or request_log[-1][1]["headers"].get("Accept-Encoding") != "identity":
-            raise AssertionError("Resposta vazia deve tentar uma conexão direta sem compressão")
-
-        def assert_diagnostic(response, expected: str) -> None:
-            server.requests.post = lambda *args, **kwargs: HttpResponse(response.status_code, response.text)
-            try:
-                server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
-                raise AssertionError("Resposta HTTP inválida deve falhar")
-            except server.MegaHttpError as error:
-                if expected not in str(error):
-                    raise AssertionError(f"Diagnóstico HTTP incompleto: {error}")
-
-        assert_diagnostic(HttpResponse(503, "offline"), "operação us; HTTP 503; status não-2xx; resposta com 7 bytes")
-        assert_diagnostic(HttpResponse(200, "not-json"), "operação us; HTTP 200; resposta não JSON; resposta com 8 bytes")
-        assert_diagnostic(HttpResponse(200, "[]"), "operação us; HTTP 200; formato JSON inesperado; resposta com 2 bytes")
-        response_sequence = iter([HttpResponse(200, ""), HttpResponse(200, "[{}]")])
-        server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or next(response_sequence))
-        server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
-        if not request_log or request_log[-1][1]["headers"]["Content-Type"] != "application/json":
-            raise AssertionError("O adaptador MEGA deve enviar JSON com cabeçalho explícito")
-
-        original_hashcash_solver = server.MegaArchive._solve_hashcash
-        original_sha256 = server.hashlib.sha256
-        hashcash_challenge = "1:192:unused:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        try:
-            class PrefixDigest:
-                def digest(self):
-                    return b"\x00\x00\x00\x00" + (b"\xff" * 28)
-            server.hashlib.sha256 = lambda _payload: PrefixDigest()
-            protocol_proof = server.MegaArchive._solve_hashcash(
-                "1:0:unused:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            )
-            if not protocol_proof.startswith("1:AAAAAAAA") or not protocol_proof.endswith(":AAAAAA"):
-                raise AssertionError("A prova Hashcash deve usar os quatro bytes iniciais e nonce Base64 URL-safe")
-            urlsafe_proof = server.MegaArchive._solve_hashcash("1:0:unused:____")
-            if not urlsafe_proof.startswith("1:____:"):
-                raise AssertionError("O seed Hashcash deve aceitar Base64 URL-safe")
-            server.hashlib.sha256 = original_sha256
-            solved_challenges = []
-            server.MegaArchive._solve_hashcash = staticmethod(
-                lambda challenge: solved_challenges.append(challenge) or "1:proof:nonce"
-            )
-            response_sequence = iter([
-                HttpResponse(402, "", {"X-Hashcash": hashcash_challenge}),
-                HttpResponse(200, "[{}]"),
-            ])
-            request_log.clear()
-            server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or next(response_sequence))
-            server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
-            assert_equal(solved_challenges, [hashcash_challenge], "O desafio X-Hashcash deve ser resolvido uma vez")
-            assert_equal(request_log[-1][1]["headers"].get("X-Hashcash"), "1:proof:nonce", "A repetição MEGA deve enviar a prova X-Hashcash")
-        finally:
-            server.hashlib.sha256 = original_sha256
-            server.MegaArchive._solve_hashcash = staticmethod(original_hashcash_solver)
-    finally:
-        server.Mega = original_mega
-        server.requests.post = original_post
-
     remote: dict[str, bytes] = {}
     upload_destinations: list[object] = []
     class FakeMegaClient:
         def find(self, name):
-            if name == server.MEGA_FOLDER:
-                return {"name": name, "h": "folder-node"}
             return {"name": name} if name in remote else None
         def destroy(self, node):
             remote.pop(node["name"], None)
@@ -294,11 +154,12 @@ def main() -> None:
             remote[Path(path).name] = Path(path).read_bytes()
             return {"name": Path(path).name}
         def download(self, node, destination):
-            output = Path(destination) / node["name"]
-            output.write_bytes(remote[node["name"]])
+            name = node.get("name") or node.get("a", {}).get("n")
+            output = Path(destination) / name
+            output.write_bytes(remote[name])
             return str(output)
         def get_files(self):
-            return {f"node-{name}": {"a": {"n": name}, "name": name, "h": f"h-{name}"} for name in remote}
+            return {"folder": {"children": [{"a": {"n": name}} for name in remote]}}
     archive = server.MegaArchive()
     archive.available, archive.client, archive.folder = True, FakeMegaClient(), {"name": "IllustriousStudio", "h": "folder-node"}
     remembered = {"prompt": "last signal", "negative_prompt": "lowres", "seed": 77, "steps": 30, "guidance": 7.0, "width": 1024, "height": 768, "strength": 0.65, "mode": "text2img", "loras": []}
@@ -308,6 +169,7 @@ def main() -> None:
         raise AssertionError("Uploads MEGA devem receber um nó individual da pasta, não uma lista de resultados de find()")
     assert_equal(archive.load_last_settings(), remembered, "Últimas preferências devem ser recuperadas do MEGA")
     server.archive = archive
+    server.manager.archive = archive
     restored_bootstrap = client.get("/api/bootstrap")
     assert_equal(restored_bootstrap.status_code, 200, "Bootstrap deve responder com preferências persistidas")
     assert_equal(restored_bootstrap.get_json()["last_settings"], remembered, "Bootstrap deve restaurar as últimas preferências")
@@ -323,105 +185,43 @@ def main() -> None:
     assert_equal(remote["job-contract.png"], b"fake-png-bytes", "Imagem do job deve aparecer no armazenamento remoto")
     manifest = json.loads(remote["job-contract.json"].decode("utf-8"))
     assert_equal(manifest["mega_synced"], True, "Manifesto final deve registrar a sincronização confirmada")
-    server.manager.archive = archive
-    server.manager.jobs.pop(job.id, None)
-    restored_count = server.manager.restore()
-    assert_equal(restored_count, 1, "O histórico remoto deve restaurar o job pelo manifesto MEGA")
-    restored_job = server.manager.get(job.id)
-    assert_equal(restored_job.filename, "job-contract.png", "A restauração deve preservar o filename do manifesto")
+    server.manager.jobs[job.id] = job
     history = client.get("/api/history")
     assert_equal(history.status_code, 200, "Histórico autenticado deve responder")
     item = next(entry for entry in history.get_json()["items"] if entry["id"] == "job-contract")
     assert_equal(item["params"]["guidance"], 6.5, "Histórico deve preservar guidance")
     assert_equal(item["params"]["width"], 1024, "Histórico deve preservar dimensões")
     assert_equal(item["image_url"], "/api/history/job-contract/image", "Histórico deve expor rota de download")
-    synced = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
-    assert_equal(synced.status_code, 200, "Sincronização manual do histórico deve responder")
-    assert_equal(synced.get_json()["restored"], 1, "Sincronização manual deve informar jobs restaurados")
 
-    reconnect_calls = {"count": 0}
-    def authenticated_remote_client(*_args):
-        reconnect_calls["count"] += 1
-        return FakeMegaClient()
-    original_email = os.environ.get("MEGA_EMAIL")
-    original_password = os.environ.get("MEGA_PASSWORD")
-    original_login_adapter = server.MegaArchive._login_with_http_adapter
-    try:
-        os.environ["MEGA_EMAIL"] = "user@example.invalid"
-        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
-        server.MegaArchive._login_with_http_adapter = staticmethod(authenticated_remote_client)
-        reconnect_archive = server.MegaArchive()
-        server.archive = reconnect_archive
-        server.manager.archive = reconnect_archive
-        server.manager.jobs.clear()
-        reconnected_bootstrap = client.get("/api/bootstrap")
-        assert_equal(reconnected_bootstrap.status_code, 200, "Bootstrap deve conectar e restaurar preferências do MEGA")
-        assert_equal(reconnected_bootstrap.get_json()["last_settings"], remembered, "Bootstrap autenticado deve restaurar o último prompt remoto")
-        reconnected_sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
-        assert_equal(reconnected_sync.get_json()["restored"], 1, "Sincronização deve restaurar histórico após login HTTP")
-        image_path.unlink(missing_ok=True)
-        restored_image = client.get("/api/history/job-contract/image")
-        assert_equal(restored_image.status_code, 200, "Rota de imagem deve recuperar o PNG remoto após login HTTP")
-        assert_equal(restored_image.get_data(), b"fake-png-bytes", "PNG remoto deve ser devolvido sem alterar seus bytes")
-        if reconnect_calls["count"] != 1:
-            raise AssertionError("Bootstrap e sincronização devem reutilizar a sessão MEGA autenticada")
-    finally:
-        server.MegaArchive._login_with_http_adapter = staticmethod(original_login_adapter)
-        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
-        else: os.environ["MEGA_EMAIL"] = original_email
-        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
-        else: os.environ["MEGA_PASSWORD"] = original_password
-
-    class HttpBackedRemoteMega(FakeMegaClient):
-        def __init__(self):
-            self.schema, self.domain, self.sequence_num = "https", "mega.test", 13
-            self.timeout, self.sid = 1, None
-        def login(self, *_args):
-            self._api_request({"a": "us"})
-            return self
-
-    original_archive = server.archive
-    original_manager_archive = server.manager.archive
-    original_jobs = dict(server.manager.jobs)
-    fallback_responses = iter([HttpResponse(200, ""), HttpResponse(200, "[{}]")])
-    fallback_request_log = []
-    original_email = os.environ.get("MEGA_EMAIL")
-    original_password = os.environ.get("MEGA_PASSWORD")
-    try:
-        os.environ["MEGA_EMAIL"] = "user@example.invalid"
-        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
-        server.Mega = HttpBackedRemoteMega
-        server.requests.post = lambda *args, **kwargs: (
-            fallback_request_log.append((args, kwargs)) or next(fallback_responses)
-        )
-        fallback_archive = server.MegaArchive()
-        server.archive = fallback_archive
-        server.manager.archive = fallback_archive
-        server.manager.jobs.clear()
-        image_path.unlink(missing_ok=True)
-        fallback_bootstrap = client.get("/api/bootstrap")
-        assert_equal(
-            fallback_bootstrap.get_json()["last_settings"],
-            remembered,
-            f"Fallback HTTP deve restaurar o último prompt no bootstrap; arquivo={fallback_archive.available}; erro={fallback_archive.error}",
-        )
-        fallback_sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
-        assert_equal(fallback_sync.get_json()["restored"], 1, "Fallback HTTP deve restaurar o manifesto remoto")
-        fallback_image = client.get("/api/history/job-contract/image")
-        assert_equal(fallback_image.get_data(), b"fake-png-bytes", "Fallback HTTP deve recuperar o PNG remoto")
-        if len(fallback_request_log) != 2 or fallback_request_log[-1][1]["headers"].get("Connection") != "close":
-            raise AssertionError("Bootstrap deve usar o fallback HTTP direto após uma resposta vazia")
-    finally:
-        server.Mega = original_mega
-        server.requests.post = original_post
-        server.archive = original_archive
-        server.manager.archive = original_manager_archive
-        server.manager.jobs.clear()
-        server.manager.jobs.update(original_jobs)
-        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
-        else: os.environ["MEGA_EMAIL"] = original_email
-        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
-        else: os.environ["MEGA_PASSWORD"] = original_password
+    remote_payload = {
+        "id": "remote-job-0001",
+        "created_at": "2026-01-02T00:00:00+00:00",
+        "status": "completed",
+        "progress": 100,
+        "params": {"prompt": "restored", "negative_prompt": "", "seed": 9, "steps": 20, "guidance": 6.0, "width": 512, "height": 512, "strength": .65, "mode": "text2img", "loras": []},
+        "completed_at": "2026-01-02T00:00:01+00:00",
+        "mega_synced": True,
+    }
+    remote["remote-job-0001.json"] = json.dumps(remote_payload).encode("utf-8")
+    remote["remote-job-0001.png"] = b"remote-png"
+    nested_nodes = archive.list_remote_metadata()
+    assert_equal(len([entry for entry in nested_nodes if entry.get("id") == "remote-job-0001"]), 1, "Manifesto aninhado deve ser descoberto")
+    server.manager.jobs.pop("remote-job-0001", None)
+    server.manager.restore()
+    restored = server.manager.get("remote-job-0001")
+    if not restored or restored.filename != "remote-job-0001.png":
+        raise AssertionError("Job restaurado sem filename deve usar o PNG derivado do id")
+    local_remote_image = server.OUTPUTS / "remote-job-0001.png"
+    local_remote_image.unlink(missing_ok=True)
+    restored_image = client.get("/api/history/remote-job-0001/image")
+    assert_equal(restored_image.status_code, 200, "Rota deve baixar PNG remoto quando não há cache local")
+    assert_equal(restored_image.data, b"remote-png", "PNG remoto deve ser servido sem alteração")
+    frontend_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
+    if "refreshHistory({sync: true})" not in frontend_source or "item.filename || item.id" not in frontend_source:
+        raise AssertionError("Interface deve sincronizar e renderizar cards restaurados sem filename original")
+    sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
+    assert_equal(sync.status_code, 200, "Sincronização manual deve responder")
+    assert_equal(sync.get_json()["archive"]["available"], True, "Sincronização deve expor estado do arquivo")
     print("CONTRATOS_COLAB_OK")
 
 
