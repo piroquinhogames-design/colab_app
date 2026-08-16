@@ -109,7 +109,11 @@ def main() -> None:
         def json(self):
             return {"items": [{
                 "id": 42, "name": "Adapter", "creator": {"username": "artist"}, "tags": ["style"],
-                "modelVersions": [{"id": 73, "name": "v1", "baseModel": "Illustrious", "images": [], "stats": {"downloadCount": 8}}],
+                "modelVersions": [
+                    {"id": 73, "name": "IFL", "baseModel": "Illustrious", "images": [], "stats": {"downloadCount": 8}},
+                    {"id": 74, "name": "LMB v2", "baseModel": "Illustrious", "images": [], "stats": {"downloadCount": 5}},
+                    {"id": 75, "name": "Outra base", "baseModel": "SDXL 1.0", "images": [], "stats": {"downloadCount": 99}},
+                ],
             }], "metadata": {"nextCursor": "next-page"}}
     def fake_get(url, params, headers, timeout):
         called.update({"url": url, "params": params, "headers": headers, "timeout": timeout})
@@ -123,7 +127,9 @@ def main() -> None:
     assert_equal(catalog.status_code, 200, "Catálogo deve responder")
     assert_equal(called["params"]["baseModels"], "Illustrious", "Catálogo deve filtrar Illustrious")
     catalog_json = catalog.get_json()
-    assert_equal(catalog_json["items"][0]["version_id"], 73, "Versão de LoRA deve ser exposta")
+    assert_equal(catalog_json["items"][0]["version_id"], 73, "Versão padrão de LoRA deve ser exposta")
+    assert_equal([item["id"] for item in catalog_json["items"][0]["versions"]], [73, 74], "Todas as versões Illustrious devem ser expostas")
+    assert_equal(catalog_json["items"][0]["versions"][1]["name"], "LMB v2", "Nome da versão deve ser preservado")
     assert_equal(catalog_json["next_cursor"], "next-page", "Cursor deve ser preservado")
     assert_equal(called["params"]["nsfw"], "false", "Catálogo padrão deve declarar nsfw=false")
     server.requests.get = fake_get

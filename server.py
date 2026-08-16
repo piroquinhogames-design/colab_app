@@ -646,10 +646,18 @@ def catalog():
             continue
         version = versions[0]
         image = next((item.get("url") for item in version.get("images", []) if item.get("url")), None)
+        version_items = []
+        for candidate in versions:
+            candidate_image = next((item.get("url") for item in candidate.get("images", []) if item.get("url")), None)
+            version_items.append({
+                "id": candidate.get("id"), "name": candidate.get("name") or f"Versão {candidate.get('id')}",
+                "image": candidate_image, "downloads": candidate.get("stats", {}).get("downloadCount", 0),
+                "created_at": candidate.get("createdAt"), "updated_at": candidate.get("updatedAt"),
+            })
         items.append({
             "id": model.get("id"), "name": model.get("name"), "creator": model.get("creator", {}).get("username"),
             "tags": model.get("tags", [])[:10], "version_id": version.get("id"), "version": version.get("name"),
-            "image": image, "downloads": version.get("stats", {}).get("downloadCount", 0), "mature": bool(model.get("nsfw")),
+            "versions": version_items, "image": image, "downloads": version.get("stats", {}).get("downloadCount", 0), "mature": bool(model.get("nsfw")),
         })
     return jsonify({
         "items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"),

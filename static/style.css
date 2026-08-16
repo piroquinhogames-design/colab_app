@@ -160,7 +160,10 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: ew-resize;
 .catalog-card::after { content: ""; position: absolute; inset: 0; z-index: 1; background: linear-gradient(transparent 5%, rgba(8,9,14,.98)); }
 .catalog-card > * { position: relative; z-index: 2; }
 .catalog-card h3 { margin: 0; font-size: .82rem; line-height: 1.12; }
-.catalog-card p { margin: .32rem 0 .7rem; color: var(--muted); font: .57rem var(--mono); }
+.catalog-card p { margin: .32rem 0 .55rem; color: var(--muted); font: .57rem var(--mono); }
+.version-picker { display: grid; gap: .22rem; margin-bottom: .5rem; color: var(--cyan); font: .5rem var(--mono); letter-spacing: .08em; }
+.version-picker select { width: 100%; min-width: 0; padding: .34rem .38rem; color: var(--ink); background: rgba(8,9,14,.9); border: 1px solid var(--cyan); font: .58rem var(--mono); }
+.version-picker select:focus { outline: 1px solid var(--magenta); border-color: var(--magenta); }
 .catalog-card button { align-self: start; border: 1px solid var(--cyan); padding: .37rem .48rem; color: var(--cyan); background: rgba(8,9,14,.78); font: .58rem var(--mono); }
 .catalog-card button:hover { color: var(--bg); background: var(--cyan); }
 .mature-badge { align-self: start; margin-bottom: .45rem; padding: .2rem .32rem; color: var(--bg); background: var(--magenta); font: .53rem var(--mono); }

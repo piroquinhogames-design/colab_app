@@ -132,16 +132,35 @@ function renderCatalog(items) {
     grid.innerHTML = '<p class="catalog-empty">Nenhum LoRA Illustrious corresponde aos filtros atuais.</p>';
     return;
   }
-  grid.innerHTML = items.map((item) => `
+  grid.innerHTML = items.map((item) => {
+    const versions = Array.isArray(item.versions) && item.versions.length
+      ? item.versions
+      : [{id: item.version_id, name: item.version || 'Versão principal', downloads: item.downloads || 0}];
+    const selected = versions.find((version) => Number(version.id) === Number(item.version_id)) || versions[0];
+    const versionOptions = versions.map((version) => `
+      <option value="${escapeHtml(version.id)}" ${Number(version.id) === Number(selected.id) ? 'selected' : ''}>
+        ${escapeHtml(version.name || `Versão ${version.id}`)}
+      </option>`).join('');
+    const modelData = {model_id: item.id, name: item.name || 'LoRA sem nome', versions};
+    return `
     <article class="catalog-card">
       ${item.image ? `<img loading="lazy" src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" />` : ''}
       ${item.mature ? '<span class="mature-badge">+18</span>' : ''}
       <h3>${escapeHtml(item.name || 'LoRA sem nome')}</h3>
       <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
-      <button type="button" data-add-lora='${escapeHtml(JSON.stringify({version_id:item.version_id,model_id:item.id,name:item.name}))}'>CONECTAR v${escapeHtml(item.version || '?')}</button>
-    </article>`).join('');
+      <label class="version-picker">VERSÃO
+        <select data-version-select="${escapeHtml(item.id)}" aria-label="Versão de ${escapeHtml(item.name || 'LoRA')}">${versionOptions}</select>
+      </label>
+      <button type="button" data-add-lora='${escapeHtml(JSON.stringify(modelData))}'>CONECTAR VERSÃO</button>
+    </article>`;
+  }).join('');
   $$('[data-add-lora]').forEach((button) => button.addEventListener('click', () => {
-    try { addLora(JSON.parse(button.dataset.addLora)); } catch { toast('Não foi possível interpretar esse LoRA.', true); }
+    try {
+      const model = JSON.parse(button.dataset.addLora);
+      const picker = button.closest('.catalog-card').querySelector('[data-version-select]');
+      const version = model.versions.find((candidate) => String(candidate.id) === String(picker.value)) || model.versions[0];
+      addLora({version_id: Number(version.id), model_id: Number(model.model_id), name: model.name, version: version.name});
+    } catch { toast('Não foi possível interpretar essa versão de LoRA.', true); }
   }));
 }
 
