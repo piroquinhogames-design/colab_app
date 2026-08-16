@@ -232,15 +232,20 @@ class MegaArchive:
             return False
         metadata_path = OUTPUTS / f"{job.id}.json"
         try:
+            # O estado só é confirmado depois que imagem e manifesto forem
+            # aceitos pelo cliente MEGA. O primeiro manifesto é provisório;
+            # o segundo registra a confirmação para restauração futura.
+            job.mega_synced = False
             if image_path and image_path.exists():
                 self._upload(image_path)
-            # Reescreve o manifesto depois do upload da imagem para que o estado
-            # persistido também registre a sincronização concluída.
+            metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
+            self._upload(metadata_path)
             job.mega_synced = True
             metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
             self._upload(metadata_path)
             return True
         except Exception as exc:
+            job.mega_synced = False
             self.error = f"Falha ao enviar ao MEGA: {str(exc)[:180]}"
             return False
 

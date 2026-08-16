@@ -6,6 +6,7 @@ credencial ou download de modelo seja acionado no ambiente de CI.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -172,6 +173,14 @@ def main() -> None:
 
     params = server.GenerationParams("signal", "none", 123, 28, 6.5, 1024, 768, .65, "text2img", [])
     job = server.Job("job-contract", "2026-01-01T00:00:00+00:00", "completed", 100, params, filename="job-contract.png")
+    image_path = server.OUTPUTS / "job-contract.png"
+    image_path.write_bytes(b"fake-png-bytes")
+    if not archive.save_job(job, image_path):
+        raise AssertionError("Imagem e manifesto do job devem ser enviados ao MEGA")
+    assert_equal(job.mega_synced, True, "Job só deve ser marcado como sincronizado após confirmação dos uploads")
+    assert_equal(remote["job-contract.png"], b"fake-png-bytes", "Imagem do job deve aparecer no armazenamento remoto")
+    manifest = json.loads(remote["job-contract.json"].decode("utf-8"))
+    assert_equal(manifest["mega_synced"], True, "Manifesto final deve registrar a sincronização confirmada")
     server.manager.jobs[job.id] = job
     history = client.get("/api/history")
     assert_equal(history.status_code, 200, "Histórico autenticado deve responder")
