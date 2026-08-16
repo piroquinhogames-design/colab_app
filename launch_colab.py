@@ -144,14 +144,14 @@ def main() -> None:
     ask_secret("MEGA_EMAIL", "E-mail da conta MEGA: ")
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
-    os.environ.setdefault("STUDIO_ROOT", "/content/illustrious-studio")
-    os.environ.setdefault("MEGA_FOLDER", "IllustriousStudio")
+    os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
+    os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
 
     install_requirements()
     validate_runtime()
     ngrok = ensure_ngrok()
     configure_ngrok(ngrok)
-    print(f"[setup] Iniciando Illustrious LoRA Studio na GPU atual (aguardando até {SERVER_START_TIMEOUT:g}s)…")
+    print(f"[setup] Iniciando ModelLab Studio na GPU atual (aguardando até {SERVER_START_TIMEOUT:g}s)…")
     server = subprocess.Popen(
         [sys.executable, "server.py"], cwd=APP_DIR, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy(),

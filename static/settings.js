@@ -12,6 +12,8 @@ export function restoreLastSettings(settings, dependencies) {
     height: 'height',
     strength: 'strength',
     edit_level: 'edit-level',
+    model: 'model',
+    sampler: 'sampler',
   };
   Object.entries(fieldIds).forEach(([settingKey, elementId]) => {
     const field = query(`#${elementId}`);
@@ -27,6 +29,6 @@ export function restoreLastSettings(settings, dependencies) {
   renderSelectedLoras();
   setMode(settings.mode === 'img2img' ? 'img2img' : 'text2img');
   if (typeof setEditLevel === 'function') setEditLevel(settings.edit_level || 'medium', {silent: true});
-  log('Último prompt e parâmetros restaurados do arquivo MEGA.');
+  log('Último prompt, modelo e parâmetros restaurados do arquivo MEGA.');
   return true;
 }

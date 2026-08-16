@@ -81,6 +81,11 @@ def main() -> None:
         raise AssertionError("O frontend deve atualizar e sincronizar o arquivo quando o MEGA conectar depois do bootstrap")
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
+    adaptive = server.validate_params({"prompt": "model profile test", "model": server.DEFAULT_MODEL_ID, "sampler": "euler_a"}, None)
+    assert_equal(adaptive.model_id, server.DEFAULT_MODEL_ID, "Perfil de modelo deve ser preservado na validação")
+    assert_equal(adaptive.sampler, "euler_a", "Sampler deve ser preservado na validação")
+    if "MODELS_CONFIG" not in server_source or "delete_job" not in server_source:
+        raise AssertionError("O servidor deve expor perfis configuráveis e exclusão remota")
 
     isolated_root = Path(tempfile.mkdtemp(prefix="illustrious-install-contract-"))
     original_app_dir = launch_colab.APP_DIR
@@ -260,6 +265,13 @@ def main() -> None:
         raise AssertionError("Sincronização manual deve reenviar imagens concluídas que ficaram pendentes")
     assert_equal(remote["pending-job.png"], b"pending-png", "Imagem pendente deve ser reenviada ao MEGA")
     assert_equal(sync_payload["last_settings_synced"], True, "Sincronização manual deve reenviar o último prompt")
+    deleted = client.delete("/api/history/pending-job", headers={"X-CSRF-Token": csrf})
+    assert_equal(deleted.status_code, 200, "Exclusão autenticada deve responder")
+    if "pending-job.png" in remote or "pending-job.json" in remote or server.manager.get("pending-job"):
+        raise AssertionError("Exclusão deve remover histórico local e arquivos remotos")
+    assert_equal((server.OUTPUTS / "pending-job.png").exists(), False, "PNG local deve ser removido após exclusão")
+    if "data-delete-history" not in frontend_source:
+        raise AssertionError("Interface deve expor ação de exclusão no histórico")
     print("CONTRATOS_COLAB_OK")
 
 

@@ -1,8 +1,8 @@
-"""Illustrious LoRA Studio — servidor para execução integral no Google Colab.
+"""ModelLab Studio — servidor para execução integral no Google Colab.
 
 Variáveis obrigatórias: STUDIO_PASSWORD, MEGA_EMAIL, MEGA_PASSWORD.
-Variáveis opcionais: CIVITAI_TOKEN, MODEL_URL, MODEL_PATH, MEGA_FOLDER,
-STUDIO_SECRET e PORT.
+Variáveis opcionais: CIVITAI_TOKEN, MODEL_URL, MODEL_PATH, MODELS_CONFIG,
+MODEL_ID, MEGA_FOLDER, STUDIO_SECRET e PORT.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from mega import Mega
 from PIL import Image
 
 
-ROOT = Path(os.environ.get("STUDIO_ROOT", "/content/illustrious-studio")).resolve()
+ROOT = Path(os.environ.get("STUDIO_ROOT", "/content/modellab-studio")).resolve()
 MODELS = ROOT / "models"
 LORAS = ROOT / "loras"
 OUTPUTS = ROOT / "outputs"
@@ -53,9 +53,61 @@ MODEL_URL = os.environ.get(
     "MODEL_URL", "https://civitai.com/api/download/models/2883731"
 )
 MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "waiIllustriousSDXL_v170.safetensors"))
-MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "IllustriousStudio")
+DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "wai-illustrious")
+MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "ModelLabStudio")
 CIVITAI_BASE = "https://civitai.com/api/v1"
 LAST_SETTINGS_NAME = "last_settings.json"
+SUPPORTED_MODEL_FAMILIES = {"sdxl", "sdxl-illustrious", "illustrious"}
+SUPPORTED_SAMPLERS = {"euler_a", "dpmpp_2m"}
+
+
+def _load_model_specs() -> dict[str, dict[str, Any]]:
+    """Carrega checkpoints SDXL compatíveis sem assumir que todo modelo usa o mesmo perfil."""
+    default = {
+        "id": DEFAULT_MODEL_ID,
+        "name": "WAI-illustrious-SDXL",
+        "url": MODEL_URL,
+        "path": str(MODEL_PATH),
+        "family": os.environ.get("MODEL_FAMILY", "sdxl-illustrious"),
+        "base": "Illustrious",
+        "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
+        "notes": "Perfil SDXL/Illustrious configurável por ambiente.",
+    }
+    specs: dict[str, dict[str, Any]] = {DEFAULT_MODEL_ID: default}
+    raw = os.environ.get("MODELS_CONFIG", "").strip()
+    if not raw:
+        return specs
+    try:
+        decoded = json.loads(raw)
+        candidates = decoded.values() if isinstance(decoded, dict) else decoded
+        if not isinstance(candidates, list) and not isinstance(decoded, dict):
+            return specs
+        if isinstance(decoded, dict):
+            candidates = list(decoded.values())
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            model_id = re.sub(r"[^a-z0-9._-]+", "-", str(candidate.get("id", "")).lower()).strip("-")
+            if not model_id:
+                continue
+            profile = dict(default)
+            profile.update(candidate)
+            profile["id"] = model_id
+            profile["name"] = str(candidate.get("name") or model_id)[:120]
+            profile["path"] = str(candidate.get("path") or MODELS / f"{model_id}.safetensors")
+            profile["defaults"] = {**default["defaults"], **(candidate.get("defaults") or {})}
+            specs[model_id] = profile
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return specs
+
+
+MODEL_SPECS = _load_model_specs()
+
+
+def get_model_spec(model_id: str | None = None) -> dict[str, Any]:
+    selected = str(model_id or DEFAULT_MODEL_ID).strip().lower()
+    return MODEL_SPECS.get(selected) or MODEL_SPECS[DEFAULT_MODEL_ID]
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config.update(
@@ -86,7 +138,7 @@ def parse_json(raw: str | None, fallback: Any) -> Any:
 
 def civitai_headers() -> dict[str, str]:
     token = os.environ.get("CIVITAI_TOKEN", "").strip()
-    headers = {"User-Agent": "Illustrious-LoRA-Studio/1.0"}
+    headers = {"User-Agent": "ModelLab-Studio/1.0"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -137,6 +189,8 @@ class GenerationParams:
     loras: list[LoRASelection] = field(default_factory=list)
     source_image: str | None = None
     edit_level: str = "medium"
+    model_id: str = DEFAULT_MODEL_ID
+    sampler: str = "euler_a"
 
 
 def saved_settings(params: GenerationParams) -> dict[str, Any]:
@@ -151,6 +205,8 @@ def saved_settings(params: GenerationParams) -> dict[str, Any]:
         "height": params.height,
         "strength": params.strength,
         "mode": params.mode,
+        "model": params.model_id,
+        "sampler": params.sampler,
         "edit_level": params.edit_level,
         "loras": [asdict(item) for item in params.loras],
     }
@@ -173,6 +229,7 @@ class Job:
     def public(self) -> dict[str, Any]:
         data = asdict(self)
         data["params"]["loras"] = [asdict(item) for item in self.params.loras]
+        data["params"]["model"] = data["params"].pop("model_id", DEFAULT_MODEL_ID)
         data["image_url"] = f"/api/history/{self.id}/image" if self.filename else None
         return data
 
@@ -367,6 +424,21 @@ class MegaArchive:
             self.error = f"Falha ao ler o histórico MEGA: {str(exc)[:180]}"
         return jobs
 
+    def delete_job(self, job_id: str) -> bool:
+        """Remove PNG e manifesto do arquivo MEGA sem falhar se um deles já não existir."""
+        if not self.available or not self.client:
+            return False
+        try:
+            with self.lock:
+                for name in (f"{job_id}.png", f"{job_id}.json"):
+                    node = self._first_node(self.client.find(name))
+                    if node:
+                        self.client.destroy(node)
+            return True
+        except Exception as exc:
+            self.error = f"Falha ao excluir o job do MEGA: {str(exc)[:180]}"
+            return False
+
     def restore_image(self, job_id: str) -> Path | None:
         destination = OUTPUTS / f"{job_id}.png"
         if destination.exists():
@@ -391,14 +463,20 @@ class GeneratorEngine:
         self.pipe = None
         self.img_pipe = None
         self.device = "cuda"
+        self.loaded_model_id: str | None = None
         self.load_lock = threading.Lock()
 
-    def ensure_checkpoint(self) -> None:
-        if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 500 * 1024 * 1024:
-            return
-        target = MODEL_PATH.with_suffix(MODEL_PATH.suffix + ".part")
+    def ensure_checkpoint(self, spec: dict[str, Any]) -> Path:
+        model_path = Path(spec["path"]).expanduser()
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        if model_path.exists() and model_path.stat().st_size > 500 * 1024 * 1024:
+            return model_path
+        url = str(spec.get("url") or "").strip()
+        if not url:
+            raise RuntimeError(f"O checkpoint {spec.get('name', spec['id'])} não está no cache e não possui URL de download.")
+        target = model_path.with_suffix(model_path.suffix + ".part")
         target.unlink(missing_ok=True)
-        with requests.get(MODEL_URL, headers=civitai_headers(), stream=True, timeout=(15, 180)) as response:
+        with requests.get(url, headers=civitai_headers(), stream=True, timeout=(15, 180)) as response:
             response.raise_for_status()
             with target.open("wb") as handle:
                 for chunk in response.iter_content(1024 * 1024):
@@ -407,7 +485,8 @@ class GeneratorEngine:
         if target.stat().st_size < 500 * 1024 * 1024:
             target.unlink(missing_ok=True)
             raise RuntimeError("O checkpoint baixado parece incompleto; tente novamente.")
-        target.replace(MODEL_PATH)
+        target.replace(model_path)
+        return model_path
 
     @staticmethod
     def _configure_memory_savers(pipeline: Any) -> None:
@@ -416,21 +495,52 @@ class GeneratorEngine:
         if getattr(pipeline, "vae", None) is not None:
             pipeline.vae.enable_slicing()
 
-    def _load_pipeline(self) -> None:
-        if self.pipe is not None:
+    def _release_pipeline(self) -> None:
+        self.pipe = None
+        self.img_pipe = None
+        self.loaded_model_id = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def _load_pipeline(self, spec: dict[str, Any]) -> None:
+        if self.pipe is not None and self.loaded_model_id == spec["id"]:
             return
-        self.ensure_checkpoint()
+        if self.pipe is not None:
+            self._release_pipeline()
+        model_path = self.ensure_checkpoint(spec)
         import torch
         from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
 
         if not torch.cuda.is_available():
             raise RuntimeError("Nenhuma GPU CUDA foi detectada. Ative uma sessão T4 no Colab e reinicie o servidor.")
-        self.pipe = StableDiffusionXLPipeline.from_single_file(
-            str(MODEL_PATH), torch_dtype=torch.float16, use_safetensors=True
-        )
-        self._configure_memory_savers(self.pipe)
-        self.img_pipe = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
-        self._configure_memory_savers(self.img_pipe)
+        try:
+            self.pipe = StableDiffusionXLPipeline.from_single_file(
+                str(model_path), torch_dtype=torch.float16, use_safetensors=True
+            )
+            self._configure_memory_savers(self.pipe)
+            self.img_pipe = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
+            self._configure_memory_savers(self.img_pipe)
+            self.loaded_model_id = spec["id"]
+        except Exception:
+            self._release_pipeline()
+            raise
+
+    def _apply_sampler(self, sampler: str) -> None:
+        """Troca o scheduler somente quando a biblioteca instalada suportar a variante."""
+        if sampler not in SUPPORTED_SAMPLERS or self.pipe is None or self.img_pipe is None:
+            return
+        try:
+            from diffusers import DPMSolverMultistepScheduler, EulerAncestralDiscreteScheduler
+            scheduler_class = DPMSolverMultistepScheduler if sampler == "dpmpp_2m" else EulerAncestralDiscreteScheduler
+            self.pipe.scheduler = scheduler_class.from_config(self.pipe.scheduler.config)
+            self.img_pipe.scheduler = scheduler_class.from_config(self.img_pipe.scheduler.config)
+        except Exception:
+            # O checkpoint continua utilizável com o scheduler original.
+            return
 
     def _download_lora(self, version_id: int) -> Path:
         destination = LORAS / f"civitai_{version_id}.safetensors"
@@ -499,8 +609,10 @@ class GeneratorEngine:
         import torch
 
         with self.load_lock:
-            self._load_pipeline()
+            spec = get_model_spec(job.params.model_id)
+            self._load_pipeline(spec)
             assert self.pipe is not None and self.img_pipe is not None
+            self._apply_sampler(job.params.sampler)
             pipeline = self.img_pipe if job.params.mode == "img2img" else self.pipe
             try:
                 try:
@@ -519,7 +631,7 @@ class GeneratorEngine:
                     except ValueError as exc:
                         if "Checkpoint not supported because layer" in str(exc):
                             raise RuntimeError(
-                                f"A LoRA '{selected.name}' não é compatível com o checkpoint Illustrious/SDXL."
+                                f"A LoRA '{selected.name}' não é compatível com a família {spec.get('base', spec.get('family', 'selecionada'))}."
                             ) from exc
                         raise
                     adapters.append(adapter)
@@ -585,8 +697,9 @@ class JobManager:
                     progress=data.get("progress", 100), params=GenerationParams(
                         prompt=params["prompt"], negative_prompt=params.get("negative_prompt", ""), seed=params["seed"],
                         steps=params["steps"], guidance=params["guidance"], width=params["width"], height=params["height"],
-                        strength=params.get("strength", 0.65), mode=params["mode"], loras=loras,
-                        edit_level=params.get("edit_level", "medium"),
+                        strength=params.get("strength", 0.65), mode=params["mode"],
+                        model_id=get_model_spec(params.get("model")).get("id", DEFAULT_MODEL_ID), sampler=params.get("sampler", "euler_a"),
+                        loras=loras, edit_level=params.get("edit_level", "medium"),
                     ), updated_at=data.get("updated_at"), completed_at=data.get("completed_at"),
                     filename=data.get("filename") or f"{data['id']}.png", mega_synced=True, error=data.get("error"), vram_gb=data.get("vram_gb"),
                 )
@@ -650,6 +763,10 @@ class JobManager:
         with self.lock:
             return self.jobs.get(job_id)
 
+    def remove(self, job_id: str) -> Job | None:
+        with self.lock:
+            return self.jobs.pop(job_id, None)
+
 
 archive = MegaArchive()
 engine = GeneratorEngine()
@@ -683,6 +800,16 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     edit_level = str(raw.get("edit_level", "medium")).strip().lower()
     if edit_level not in {"low", "medium", "high"}:
         raise ValueError("Nível de edição inválido. Use baixo, médio ou alto.")
+    requested_model = str(raw.get("model") or DEFAULT_MODEL_ID).strip().lower()
+    if requested_model not in MODEL_SPECS:
+        raise ValueError("Checkpoint não reconhecido. Selecione um perfil disponível no ModelLab.")
+    model_spec = get_model_spec(requested_model)
+    family = str(model_spec.get("family", "sdxl")).strip().lower()
+    if family not in SUPPORTED_MODEL_FAMILIES:
+        raise ValueError(f"A família {family!r} não está habilitada neste motor. Use um perfil SDXL/Illustrious.")
+    sampler = str(raw.get("sampler") or model_spec.get("defaults", {}).get("sampler", "euler_a")).strip().lower()
+    if sampler not in SUPPORTED_SAMPLERS:
+        raise ValueError("Sampler não suportado pelo perfil atual.")
     prompt = str(raw.get("prompt", "")).strip()
     if not prompt or len(prompt) > 4000:
         raise ValueError("Informe um prompt entre 1 e 4000 caracteres.")
@@ -717,7 +844,8 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     return GenerationParams(
         prompt=prompt, negative_prompt=str(raw.get("negative_prompt", ""))[:4000], seed=seed,
         steps=steps, guidance=guidance, width=width, height=height, strength=strength,
-        mode=mode, loras=parsed_loras, source_image=source_image, edit_level=edit_level,
+        mode=mode, model_id=requested_model, sampler=sampler, loras=parsed_loras,
+        source_image=source_image, edit_level=edit_level,
     )
 
 
@@ -764,7 +892,15 @@ def bootstrap():
         "last_settings": last_settings,
         "last_settings_source": "mega" if last_settings else None,
         "limits": {"maxLoras": MAX_LORAS, "sizes": list(range(512, 1025, 64))},
-        "model": {"name": "WAI-illustrious-SDXL", "cached": MODEL_PATH.exists()},
+        "models": [{
+            "id": spec["id"], "name": spec.get("name", spec["id"]), "family": spec.get("family", "sdxl"),
+            "base": spec.get("base", "SDXL"), "cached": Path(spec["path"]).exists(),
+            "defaults": spec.get("defaults", {}), "notes": spec.get("notes", ""),
+        } for spec in MODEL_SPECS.values()],
+        "model": {
+            "id": DEFAULT_MODEL_ID, "name": get_model_spec()["name"],
+            "cached": Path(get_model_spec()["path"]).exists(),
+        },
     })
 
 
@@ -975,6 +1111,27 @@ def history_sync():
         "last_settings_synced": last_settings_synced,
         "archive": {"available": archive.available, "error": archive.error, "folder": MEGA_FOLDER},
     })
+
+
+@app.route("/api/history/<job_id>", methods=["DELETE"])
+@authentication_required
+@csrf_required
+def delete_history(job_id: str):
+    job = manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Registro de histórico não encontrado."}), 404
+    if job.status in {"queued", "running"}:
+        return jsonify({"error": "Não é possível excluir um job enquanto ele está em execução."}), 409
+    remote_required = bool(job.mega_synced)
+    if remote_required:
+        if not archive.available:
+            return jsonify({"error": "O registro está sincronizado com o MEGA, mas o arquivo remoto está indisponível. Conecte o MEGA antes de excluir."}), 503
+        if not archive.delete_job(job.id):
+            return jsonify({"error": archive.error or "Não foi possível confirmar a exclusão no MEGA."}), 502
+    for path in (OUTPUTS / (job.filename or f"{job.id}.png"), OUTPUTS / f"{job.id}.json"):
+        path.unlink(missing_ok=True)
+    manager.remove(job.id)
+    return jsonify({"ok": True, "id": job.id, "remote_deleted": remote_required})
 
 
 @app.route("/api/history/<job_id>/image")

@@ -16,6 +16,7 @@ const state = {
   archiveReady: false,
   historyItems: [],
   previewJobId: null,
+  models: [],
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -76,6 +77,39 @@ function setNode(online) {
   const node = $('#node-status');
   node.classList.toggle('offline', !online);
   node.querySelector('span').textContent = online ? 'NODE // ONLINE' : 'NODE // OFFLINE';
+}
+
+function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}) {
+  const model = state.models.find((item) => item.id === modelId) || state.models[0];
+  if (!model) return;
+  const defaults = model.defaults || {};
+  if (applyDefaults) {
+    [['steps', defaults.steps], ['guidance', defaults.guidance], ['strength', defaults.strength]].forEach(([id, value]) => {
+      if (value === undefined || !$(`#${id}`)) return;
+      $(`#${id}`).value = value;
+      const output = $(`#${id}-value`);
+      if (output) output.value = value;
+    });
+    if (defaults.sampler && $('#sampler')) $('#sampler').value = defaults.sampler;
+  }
+  const badge = $('#model-badge');
+  if (badge) badge.textContent = `${String(model.family || 'SDXL').toUpperCase()} // ${model.cached ? 'CACHE LOCAL' : 'DOWNLOAD SOB DEMANDA'}`;
+  const engine = $('#engine-readout');
+  if (engine) engine.textContent = String(model.name || model.id).slice(0, 32).toUpperCase();
+  if (!silent) log(`Perfil ${model.name || model.id} selecionado; defaults adaptativos aplicados.`);
+}
+
+function renderModels(models, selectedId = '') {
+  state.models = Array.isArray(models) ? models.filter((item) => item && item.id) : [];
+  const select = $('#model');
+  if (!select) return;
+  if (!state.models.length) {
+    state.models = [{id: 'wai-illustrious', name: 'WAI-illustrious-SDXL', family: 'sdxl-illustrious', cached: false, defaults: {steps: 28, guidance: 6.5, strength: .65, sampler: 'euler_a'}}];
+  }
+  select.innerHTML = state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)}${model.cached ? ' · CACHE' : ''}</option>`).join('');
+  const initial = selectedId && state.models.some((item) => item.id === selectedId) ? selectedId : state.models[0].id;
+  select.value = initial;
+  updateModelProfile(initial, {silent: true});
 }
 
 function setMode(mode) {
@@ -317,12 +351,14 @@ function imageCard(job) {
   const mode = job.params?.mode === 'img2img' ? 'IMG→IMG' : 'TXT→IMG';
   const editLevel = job.params?.mode === 'img2img' ? ` // ${({'low': 'BAIXO', 'medium': 'MÉDIO', 'high': 'ALTO'})[job.params?.edit_level] || 'MÉDIO'}` : '';
   const strength = job.params?.mode === 'img2img' ? ` // DENOISE ${job.params?.strength ?? '--'}` : '';
-  const settings = `${mode}${editLevel} // ${job.params?.width ?? '--'}×${job.params?.height ?? '--'} // ${job.params?.steps ?? '--'} STEPS // CFG ${job.params?.guidance ?? '--'}${strength}`;
+  const model = job.params?.model || 'MODEL PROFILE';
+  const sampler = job.params?.sampler ? ` // ${String(job.params.sampler).toUpperCase()}` : '';
+  const settings = `${mode}${editLevel} // ${job.params?.width ?? '--'}×${job.params?.height ?? '--'} // ${job.params?.steps ?? '--'} STEPS // CFG ${job.params?.guidance ?? '--'}${strength}${sampler}`;
   const jobId = encodeURIComponent(job.id);
   return `<article class="history-card" data-history-id="${jobId}">
     <img loading="lazy" data-fullscreen="${jobId}" src="/api/history/${jobId}/image" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
-    <div class="history-overlay"><p title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="history-actions-row"><button class="history-icon-button" data-fullscreen="${jobId}" type="button" title="Tela cheia" aria-label="Abrir imagem em tela cheia">⛶</button><button class="history-icon-button remix" data-remix-history="${jobId}" type="button" title="Remixar materiais" aria-label="Remixar esta imagem">⟳</button><a class="download-link" href="/api/history/${jobId}/image?download=1" title="Baixar PNG">↓</a></div></div>
-    <div class="history-meta"><strong>SEED ${escapeHtml(job.params?.seed)}</strong><span>${escapeHtml(settings)}</span><span>${escapeHtml(loras)} // ${escapeHtml(formatDate(job.completed_at || job.created_at))}</span></div>
+    <div class="history-overlay"><p title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="history-actions-row"><button class="history-icon-button" data-fullscreen="${jobId}" type="button" title="Tela cheia" aria-label="Abrir imagem em tela cheia">⛶</button><button class="history-icon-button remix" data-remix-history="${jobId}" type="button" title="Remixar materiais" aria-label="Remixar esta imagem">⟳</button><button class="history-icon-button delete" data-delete-history="${jobId}" type="button" title="Excluir do histórico e do MEGA" aria-label="Excluir esta imagem">⌫</button><a class="download-link" href="/api/history/${jobId}/image?download=1" title="Baixar PNG">↓</a></div></div>
+    <div class="history-meta"><strong>SEED ${escapeHtml(job.params?.seed)} // ${escapeHtml(model)}</strong><span>${escapeHtml(settings)}</span><span>${escapeHtml(loras)} // ${escapeHtml(formatDate(job.completed_at || job.created_at))}</span></div>
   </article>`;
 }
 
@@ -349,7 +385,7 @@ function openImagePreview(jobId) {
   $('#image-dialog-preview').src = `/api/history/${encodeURIComponent(job.id)}/image`;
   $('#image-dialog-preview').alt = `Imagem gerada a partir do prompt ${prompt}`;
   $('#image-dialog-prompt').textContent = prompt;
-  $('#image-dialog-meta').innerHTML = `${escapeHtml(job.params?.mode === 'img2img' ? 'IMG→IMG' : 'TXT→IMG')} // ${escapeHtml(job.params?.width)}×${escapeHtml(job.params?.height)} // ${escapeHtml(job.params?.steps)} STEPS // CFG ${escapeHtml(job.params?.guidance)}<br />${escapeHtml(loras)}<br />${escapeHtml(formatDate(job.completed_at || job.created_at))}`;
+  $('#image-dialog-meta').innerHTML = `${escapeHtml(job.params?.model || 'MODEL PROFILE')} // ${escapeHtml(job.params?.sampler || 'euler_a')}<br />${escapeHtml(job.params?.mode === 'img2img' ? 'IMG→IMG' : 'TXT→IMG')} // ${escapeHtml(job.params?.width)}×${escapeHtml(job.params?.height)} // ${escapeHtml(job.params?.steps)} STEPS // CFG ${escapeHtml(job.params?.guidance)}<br />${escapeHtml(loras)}<br />${escapeHtml(formatDate(job.completed_at || job.created_at))}`;
   $('#image-dialog').showModal();
 }
 
@@ -375,19 +411,34 @@ async function remixHistoryJob(jobId) {
   } catch (error) { toast(error.message, true); }
 }
 
+async function deleteHistoryJob(jobId) {
+  const job = historyJob(jobId);
+  if (!job) return;
+  const confirmed = window.confirm('Excluir esta imagem do histórico local e do MEGA? Esta ação não pode ser desfeita.');
+  if (!confirmed) return;
+  try {
+    const result = await api(`/api/history/${encodeURIComponent(job.id)}`, {method: 'DELETE'});
+    if ($('#image-dialog').open && String(state.previewJobId) === String(job.id)) $('#image-dialog').close();
+    await refreshHistory();
+    toast(result.remote_deleted ? 'Imagem excluída do histórico local e do MEGA.' : 'Imagem excluída do histórico local.');
+    log(`Job ${String(job.id).slice(0, 8)} removido do arquivo.`);
+  } catch (error) { toast(error.message, true); }
+}
+
 function bindHistoryActions() {
   $$('[data-fullscreen]').forEach((element) => element.addEventListener('click', (event) => {
     event.preventDefault();
     openImagePreview(decodeURIComponent(element.dataset.fullscreen));
   }));
   $$('[data-remix-history]').forEach((button) => button.addEventListener('click', () => remixHistoryJob(decodeURIComponent(button.dataset.remixHistory))));
+  $$('[data-delete-history]').forEach((button) => button.addEventListener('click', () => deleteHistoryJob(decodeURIComponent(button.dataset.deleteHistory))));
 }
 
 function setArchiveState(archive) {
   if (!archive) return;
   const available = Boolean(archive.available);
   const ready = archive.ready !== false;
-  $('#archive-readout').textContent = available ? `MEGA // ${archive.folder || 'IllustriousStudio'}` : (ready ? 'MEGA // INDISPONÍVEL' : 'MEGA // CONECTANDO');
+  $('#archive-readout').textContent = available ? `MEGA // ${archive.folder || 'ModelLabStudio'}` : (ready ? 'MEGA // INDISPONÍVEL' : 'MEGA // CONECTANDO');
   $('#archive-readout').style.color = available ? 'var(--acid)' : (ready ? 'var(--danger)' : 'var(--muted)');
 }
 
@@ -472,6 +523,7 @@ async function submitJob(event) {
     mode: state.mode, seed: Number($('#seed').value), steps: Number($('#steps').value),
     guidance: Number($('#guidance').value), width: Number($('#width').value), height: Number($('#height').value),
     strength: Number($('#strength').value), edit_level: state.editLevel, loras: state.selectedLoras,
+    model: $('#model').value, sampler: $('#sampler').value,
   };
   const data = new FormData();
   data.append('payload', JSON.stringify(payload));
@@ -503,7 +555,9 @@ async function bootstrap() {
     } else if (!payload.archive.available) {
       log(payload.archive.error || 'Arquivo MEGA indisponível; a galeria local continua disponível.');
     }
+    renderModels(payload.models || [], payload.last_settings?.model || payload.model?.id || '');
     restoreLastSettings(payload.last_settings);
+    updateModelProfile($('#model')?.value, {silent: true, applyDefaults: false});
     if (payload.last_settings_source === 'mega') log('Manifesto de preferências recuperado do MEGA.');
     renderHistory(payload.jobs || []);
     // Releitura após o bootstrap cobre o caso em que a sessão MEGA acabou de conectar.
@@ -527,6 +581,7 @@ function bindEvents() {
   $$('.edit-level').forEach((button) => button.addEventListener('click', () => setEditLevel(button.dataset.editLevel)));
   $$('.tag-bank button').forEach((button) => button.addEventListener('click', () => appendTag(button.dataset.target, button.textContent)));
   $('#source-image').addEventListener('change', (event) => { $('#upload-name').textContent = event.target.files[0] ? event.target.files[0].name : 'NENHUM ARQUIVO NO BUFFER'; });
+  $('#model').addEventListener('change', (event) => updateModelProfile(event.target.value));
   $('#generation-form').addEventListener('submit', submitJob);
   $('#open-catalog').addEventListener('click', () => { $('#catalog-dialog').showModal(); loadCatalog(); });
   $('#close-catalog').addEventListener('click', () => $('#catalog-dialog').close());
