@@ -222,11 +222,17 @@ function renderHistory(items) {
   grid.innerHTML = complete.length ? complete.map(imageCard).join('') : '<div class="empty-history"><span>///</span><p>O arquivo ainda não contém sinais gerados.</p></div>';
 }
 
-async function refreshHistory() {
+async function refreshHistory({sync = false} = {}) {
   try {
-    const payload = await api('/api/history');
+    const payload = sync
+      ? await api('/api/history/sync', {method: 'POST'})
+      : await api('/api/history');
     renderHistory(payload.items || []);
-    $('#queue-readout').textContent = `${payload.items.filter((item) => ['queued', 'running'].includes(item.status)).length} JOBS`;
+    $('#queue-readout').textContent = `${(payload.items || []).filter((item) => ['queued', 'running'].includes(item.status)).length} JOBS`;
+    if (sync) {
+      log(`${payload.restored || 0} manifesto(s) restaurado(s) do MEGA.`);
+      toast(`${payload.restored || 0} sinal(is) recuperado(s) do MEGA.`);
+    }
   } catch (error) { toast(error.message, true); }
 }
 
@@ -328,7 +334,7 @@ function bindEvents() {
   $('#search-catalog').addEventListener('click', () => { state.catalogCursor = null; loadCatalog(); });
   $('#catalog-adult').addEventListener('change', () => { state.catalogCursor = null; $('#next-catalog').disabled = true; });
   $('#next-catalog').addEventListener('click', () => loadCatalog({append: true}));
-  $('#refresh-history').addEventListener('click', () => { refreshHistory(); log('Arquivo de imagens sincronizado na interface.'); });
+  $('#refresh-history').addEventListener('click', () => { refreshHistory({sync: true}); });
   $('#logout').addEventListener('click', async () => { try { await api('/api/logout', {method: 'POST'}); } finally { window.location.assign('/'); } });
   wireParameterReadouts();
   setMode('text2img');

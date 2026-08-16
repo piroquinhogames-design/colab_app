@@ -157,6 +157,8 @@ def main() -> None:
             output = Path(destination) / node["name"]
             output.write_bytes(remote[node["name"]])
             return str(output)
+        def get_files(self):
+            return {f"node-{name}": {"a": {"n": name}, "name": name, "h": f"h-{name}"} for name in remote}
     archive = server.MegaArchive()
     archive.available, archive.client, archive.folder = True, FakeMegaClient(), {"name": "IllustriousStudio", "h": "folder-node"}
     remembered = {"prompt": "last signal", "negative_prompt": "lowres", "seed": 77, "steps": 30, "guidance": 7.0, "width": 1024, "height": 768, "strength": 0.65, "mode": "text2img", "loras": []}
@@ -181,13 +183,21 @@ def main() -> None:
     assert_equal(remote["job-contract.png"], b"fake-png-bytes", "Imagem do job deve aparecer no armazenamento remoto")
     manifest = json.loads(remote["job-contract.json"].decode("utf-8"))
     assert_equal(manifest["mega_synced"], True, "Manifesto final deve registrar a sincronização confirmada")
-    server.manager.jobs[job.id] = job
+    server.manager.archive = archive
+    server.manager.jobs.pop(job.id, None)
+    restored_count = server.manager.restore()
+    assert_equal(restored_count, 1, "O histórico remoto deve restaurar o job pelo manifesto MEGA")
+    restored_job = server.manager.get(job.id)
+    assert_equal(restored_job.filename, "job-contract.png", "A restauração deve preservar o filename do manifesto")
     history = client.get("/api/history")
     assert_equal(history.status_code, 200, "Histórico autenticado deve responder")
     item = next(entry for entry in history.get_json()["items"] if entry["id"] == "job-contract")
     assert_equal(item["params"]["guidance"], 6.5, "Histórico deve preservar guidance")
     assert_equal(item["params"]["width"], 1024, "Histórico deve preservar dimensões")
     assert_equal(item["image_url"], "/api/history/job-contract/image", "Histórico deve expor rota de download")
+    synced = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
+    assert_equal(synced.status_code, 200, "Sincronização manual do histórico deve responder")
+    assert_equal(synced.get_json()["restored"], 1, "Sincronização manual deve informar jobs restaurados")
     print("CONTRATOS_COLAB_OK")
 
 

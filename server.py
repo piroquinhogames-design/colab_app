@@ -270,7 +270,7 @@ class MegaArchive:
         cache = ROOT / "mega-cache"
         cache.mkdir(exist_ok=True)
         try:
-            node = self.client.find(LAST_SETTINGS_NAME)
+            node = self._first_node(self.client.find(LAST_SETTINGS_NAME))
             if not node:
                 return None
             downloaded = self.client.download(node, str(cache))
@@ -284,6 +284,22 @@ class MegaArchive:
             self.error = f"Falha ao recuperar preferências do MEGA: {str(exc)[:180]}"
             return None
 
+    @staticmethod
+    def _file_nodes(value: Any) -> list[dict[str, Any]]:
+        """Extrai nós de arquivo tanto do mapa plano quanto de árvores retornadas pelo mega.py."""
+        found: list[dict[str, Any]] = []
+        if isinstance(value, dict):
+            attributes = value.get("a")
+            if isinstance(attributes, dict) and isinstance(attributes.get("n"), str):
+                found.append(value)
+            else:
+                for child in value.values():
+                    found.extend(MegaArchive._file_nodes(child))
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                found.extend(MegaArchive._file_nodes(child))
+        return found
+
     def list_remote_metadata(self) -> list[dict[str, Any]]:
         if not self.available or not self.client:
             return []
@@ -292,15 +308,18 @@ class MegaArchive:
         jobs: list[dict[str, Any]] = []
         try:
             files = self.client.get_files()
-            for node in files.values():
-                name = node.get("a", {}).get("n", "") if isinstance(node, dict) else ""
-                if not re.fullmatch(r"[a-f0-9-]{36}\.json", name):
+            nodes = self._file_nodes(files)
+            for node in nodes:
+                name = node.get("a", {}).get("n", "")
+                if name == LAST_SETTINGS_NAME or not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}\.json", name, re.I):
                     continue
                 try:
                     downloaded = self.client.download(node, str(cache))
                     local = Path(downloaded) if downloaded else cache / name
                     if local.exists():
-                        jobs.append(json.loads(local.read_text(encoding="utf-8")))
+                        payload = json.loads(local.read_text(encoding="utf-8"))
+                        if isinstance(payload, dict) and payload.get("id"):
+                            jobs.append(payload)
                 except Exception:
                     continue
         except Exception as exc:
@@ -314,7 +333,7 @@ class MegaArchive:
         if not self.available or not self.client:
             return None
         try:
-            node = self.client.find(destination.name)
+            node = self._first_node(self.client.find(destination.name))
             if node:
                 downloaded = self.client.download(node, str(OUTPUTS))
                 result = Path(downloaded) if downloaded else destination
@@ -471,7 +490,8 @@ class JobManager:
         self.worker = threading.Thread(target=self._run, name="generation-worker", daemon=True)
         self.worker.start()
 
-    def restore(self) -> None:
+    def restore(self) -> int:
+        restored_count = 0
         for data in self.archive.list_remote_metadata():
             try:
                 params = data["params"]
@@ -483,11 +503,13 @@ class JobManager:
                         steps=params["steps"], guidance=params["guidance"], width=params["width"], height=params["height"],
                         strength=params.get("strength", 0.65), mode=params["mode"], loras=loras,
                     ), updated_at=data.get("updated_at"), completed_at=data.get("completed_at"),
-                    filename=data.get("filename"), mega_synced=True, error=data.get("error"), vram_gb=data.get("vram_gb"),
+                    filename=data.get("filename") or f"{data['id']}.png", mega_synced=data.get("mega_synced", True), error=data.get("error"), vram_gb=data.get("vram_gb"),
                 )
                 self.jobs[restored.id] = restored
+                restored_count += 1
             except (KeyError, TypeError, ValueError):
                 continue
+        return restored_count
 
     def enqueue(self, params: GenerationParams) -> Job:
         job = Job(id=str(uuid.uuid4()), created_at=now_iso(), status="queued", progress=0, params=params, updated_at=now_iso())
@@ -711,7 +733,17 @@ def get_job(job_id: str):
 @app.route("/api/history")
 @authentication_required
 def history():
+    if request.args.get("sync", "").lower() in {"1", "true", "yes"}:
+        manager.restore()
     return jsonify({"items": manager.public_jobs()})
+
+
+@app.route("/api/history/sync", methods=["POST"])
+@authentication_required
+@csrf_required
+def sync_history():
+    restored = manager.restore()
+    return jsonify({"items": manager.public_jobs(), "restored": restored})
 
 
 @app.route("/api/history/<job_id>/image")
