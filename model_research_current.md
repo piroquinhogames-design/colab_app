@@ -68,4 +68,10 @@ Também existe a conversão comunitária `https://huggingface.co/CalamitousFelic
 
 ## Ajuste final da API modular
 
-A API oficial atual usa `pipe.load_components(dtype=torch.bfloat16)`. O ModelLab usa `dtype=torch.float16` para a GPU T4, mantendo `ModularPipeline.from_pretrained(...)` e `.to("cuda")`. O manifesto validado é `modular_model_index.json` (HTTP 200); `model_index.json` retorna HTTP 404 por não ser uma pipeline clássica.
+A API oficial documenta `pipe.load_components(dtype=torch.bfloat16)`, mas a tentativa de usar `dtype=torch.float16` diretamente no runtime T4 encaminha o argumento ao `CosmosTransformer3DModel`, que o rejeita. O ModelLab mantém `ModularPipeline.from_pretrained(...)`, carrega com `load_components()` sem kwargs e converte os módulos compatíveis explicitamente para FP16/CUDA. O manifesto validado é `modular_model_index.json` (HTTP 200); `model_index.json` retorna HTTP 404 por não ser uma pipeline clássica.
+
+## API oficial confirmada do Anima
+
+A documentação oficial do Diffusers mostra `ModularPipeline.from_pretrained("circlestone-labs/Anima-Base-v1.0-Diffusers")`, `pipe.load_components(dtype=torch.bfloat16)` e `pipe.to("cuda")`. A especificação `AnimaAutoBlocks` aceita `prompt`, `negative_prompt`, `image`, `height`, `width`, `generator`, `num_inference_steps`, `strength`, `latents` e `output_type`; ela não lista `guidance_scale` nem `callback_on_step_end` como entradas da chamada. Fonte: https://huggingface.co/docs/diffusers/main/api/pipelines/anima.
+
+Na execução real com Diffusers 0.39.0, `dtype=torch.float16` foi encaminhado ao construtor de `CosmosTransformer3DModel`, que rejeitou esse argumento. O workaround será carregar os componentes sem `dtype` e converter/mover os módulos compatíveis explicitamente para CUDA/FP16, além de não enviar parâmetros exclusivos de SDXL ao Anima.

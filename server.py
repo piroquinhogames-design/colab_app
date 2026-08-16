@@ -613,6 +613,20 @@ class GeneratorEngine:
         if getattr(pipeline, "vae", None) is not None:
             pipeline.vae.enable_slicing()
 
+    @staticmethod
+    def _prepare_anima_for_t4(pipeline: Any, torch_module: Any) -> None:
+        """Move os módulos do Anima para CUDA em FP16 sem passar dtype ao loader.
+
+        O `load_components` do Diffusers 0.39 encaminha kwargs diretamente para
+        cada componente. O CosmosTransformer3DModel não aceita `dtype` em seu
+        construtor, então o carregamento precisa ocorrer sem esse argumento e a
+        conversão para o formato suportado pela T4 deve ser explícita.
+        """
+        components = getattr(pipeline, "components", {})
+        for component in components.values():
+            if isinstance(component, torch_module.nn.Module):
+                component.half().to("cuda")
+
     def _release_pipeline(self) -> None:
         self.pipe = None
         self.img_pipe = None
@@ -651,11 +665,13 @@ class GeneratorEngine:
                     "Reexecute o inicializador para instalar Diffusers 0.39.0+."
                 ) from error
             try:
-                # A T4 é mais segura com FP16; o checkpoint original é BF16,
-                # mas o Diffusers faz a conversão dos componentes ao carregar.
+                # O loader modular encaminha kwargs para cada componente e o
+                # CosmosTransformer3DModel rejeita `dtype`. Carregamos no dtype
+                # padrão e convertemos os módulos explicitamente para FP16/CUDA,
+                # formato compatível com a GPU T4.
                 self.pipe = ModularPipeline.from_pretrained(repo_id)
-                self.pipe.load_components(dtype=torch.float16)
-                self.pipe.to("cuda")
+                self.pipe.load_components()
+                self._prepare_anima_for_t4(self.pipe, torch)
                 self.img_pipe = None
                 self.loaded_model_id = spec["id"]
                 return
@@ -801,14 +817,18 @@ class GeneratorEngine:
                     update(min(98, int((step + 1) * 100 / callback_steps)), self._vram())
                     return callback_kwargs
 
+                engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
                 options: dict[str, Any] = {
                     "prompt": job.params.prompt,
                     "negative_prompt": job.params.negative_prompt,
                     "num_inference_steps": job.params.steps,
-                    "guidance_scale": job.params.guidance,
                     "generator": generator,
-                    "callback_on_step_end": progress_callback,
                 }
+                if engine != "anima":
+                    options.update({
+                        "guidance_scale": job.params.guidance,
+                        "callback_on_step_end": progress_callback,
+                    })
                 if job.params.mode == "img2img":
                     if not job.params.source_image:
                         raise RuntimeError("O modo img2img requer uma imagem-base.")
