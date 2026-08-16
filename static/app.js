@@ -142,6 +142,7 @@ function renderCatalog(items) {
         ${escapeHtml(version.name || `Versão ${version.id}`)}
       </option>`).join('');
     const modelData = {model_id: item.id, name: item.name || 'LoRA sem nome', versions};
+    const civitaiUrl = `https://civitai.com/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
     return `
     <article class="catalog-card">
       ${item.image ? `<img loading="lazy" src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" />` : ''}
@@ -151,7 +152,10 @@ function renderCatalog(items) {
       <label class="version-picker">VERSÃO
         <select data-version-select="${escapeHtml(item.id)}" aria-label="Versão de ${escapeHtml(item.name || 'LoRA')}">${versionOptions}</select>
       </label>
-      <button type="button" data-add-lora='${escapeHtml(JSON.stringify(modelData))}'>CONECTAR VERSÃO</button>
+      <div class="catalog-card-actions">
+        <button type="button" data-add-lora='${escapeHtml(JSON.stringify(modelData))}'>CONECTAR VERSÃO</button>
+        <a class="civitai-link" data-civitai-link href="${escapeHtml(civitaiUrl)}" target="_blank" rel="noopener noreferrer">ABRIR NO CIVITAI ↗</a>
+      </div>
     </article>`;
   }).join('');
   $$('[data-add-lora]').forEach((button) => button.addEventListener('click', () => {
@@ -161,6 +165,11 @@ function renderCatalog(items) {
       const version = model.versions.find((candidate) => String(candidate.id) === String(picker.value)) || model.versions[0];
       addLora({version_id: Number(version.id), model_id: Number(model.model_id), name: model.name, version: version.name});
     } catch { toast('Não foi possível interpretar essa versão de LoRA.', true); }
+  }));
+  $$('[data-version-select]').forEach((picker) => picker.addEventListener('change', () => {
+    const card = picker.closest('.catalog-card');
+    const link = card && card.querySelector('[data-civitai-link]');
+    if (link) link.href = `https://civitai.com/models/${encodeURIComponent(picker.dataset.versionSelect)}?modelVersionId=${encodeURIComponent(picker.value)}`;
   }));
 }
 

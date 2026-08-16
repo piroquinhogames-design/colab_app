@@ -164,8 +164,11 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: ew-resize;
 .version-picker { display: grid; gap: .22rem; margin-bottom: .5rem; color: var(--cyan); font: .5rem var(--mono); letter-spacing: .08em; }
 .version-picker select { width: 100%; min-width: 0; padding: .34rem .38rem; color: var(--ink); background: rgba(8,9,14,.9); border: 1px solid var(--cyan); font: .58rem var(--mono); }
 .version-picker select:focus { outline: 1px solid var(--magenta); border-color: var(--magenta); }
+.catalog-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .42rem; margin-top: .1rem; }
 .catalog-card button { align-self: start; border: 1px solid var(--cyan); padding: .37rem .48rem; color: var(--cyan); background: rgba(8,9,14,.78); font: .58rem var(--mono); }
 .catalog-card button:hover { color: var(--bg); background: var(--cyan); }
+.civitai-link { display: inline-block; border: 1px solid var(--magenta); padding: .37rem .48rem; color: var(--magenta); background: rgba(8,9,14,.78); font: .54rem var(--mono); text-decoration: none; }
+.civitai-link:hover { color: var(--bg); background: var(--magenta); }
 .mature-badge { align-self: start; margin-bottom: .45rem; padding: .2rem .32rem; color: var(--bg); background: var(--magenta); font: .53rem var(--mono); }
 .catalog-empty { grid-column: 1 / -1; align-self: center; justify-self: center; color: var(--muted); font: .7rem var(--mono); }
 .catalog-footer { margin-top: .8rem; padding-top: .8rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem; border-top: 1px solid var(--line); color: var(--muted); font: .58rem var(--mono); }
