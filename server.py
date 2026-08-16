@@ -627,6 +627,31 @@ class GeneratorEngine:
             if isinstance(component, torch_module.nn.Module):
                 component.half().to("cuda")
 
+    @staticmethod
+    def _load_anima_fast_tokenizers(repo_id: str) -> tuple[Any, Any]:
+        """Carrega os tokenizers Fast publicados pelo checkpoint Anima.
+
+        O modular_model_index do checkpoint declara Qwen2Tokenizer e T5Tokenizer,
+        mas o repositório contém apenas tokenizer.json. As classes lentas tentam
+        abrir vocabularies auxiliares ausentes e acabam recebendo um caminho None.
+        """
+        from transformers import AutoTokenizer, T5TokenizerFast
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            repo_id,
+            subfolder="tokenizer",
+            use_fast=True,
+        )
+        t5_tokenizer = T5TokenizerFast.from_pretrained(
+            repo_id,
+            subfolder="t5_tokenizer",
+        )
+        if not getattr(tokenizer, "is_fast", False):
+            raise RuntimeError("O tokenizer Qwen do Anima não foi carregado na variante Fast.")
+        if not getattr(t5_tokenizer, "is_fast", False):
+            raise RuntimeError("O tokenizer T5 do Anima não foi carregado na variante Fast.")
+        return tokenizer, t5_tokenizer
+
     def _release_pipeline(self) -> None:
         self.pipe = None
         self.img_pipe = None
@@ -669,7 +694,17 @@ class GeneratorEngine:
                 # Sem ele, o Anima é materializado em FP32 e pode estourar a VRAM
                 # da T4 antes que a conversão para FP16 aconteça.
                 self.pipe = ModularPipeline.from_pretrained(repo_id)
-                self.pipe.load_components(torch_dtype=torch.float16)
+                # O checkpoint declara Qwen2Tokenizer/T5Tokenizer, porém publica
+                # somente tokenizer.json. Carregar esses dois itens pelo loader
+                # modular faz o Transformers cair nas classes lentas e procurar
+                # vocabularies inexistentes; carregue-os explicitamente como Fast.
+                network_components = [
+                    name for name in self.pipe._component_specs
+                    if name not in {"tokenizer", "t5_tokenizer"}
+                ]
+                self.pipe.load_components(names=network_components, torch_dtype=torch.float16)
+                tokenizer, t5_tokenizer = self._load_anima_fast_tokenizers(repo_id)
+                self.pipe.update_components(tokenizer=tokenizer, t5_tokenizer=t5_tokenizer)
                 self._prepare_anima_for_t4(self.pipe, torch)
                 self.img_pipe = None
                 self.loaded_model_id = spec["id"]
