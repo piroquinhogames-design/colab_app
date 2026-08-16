@@ -40,23 +40,7 @@ def _load_vendor_package():
 
 
 _vendor = _load_vendor_package()
-_VendorMega = _vendor.Mega
-
-
-class Mega(_VendorMega):
-    """Compatibility wrapper for mega.py's ``find`` return shape.
-
-    Some mega.py versions return a list from ``find()`` while ``download()``
-    expects a single node. The studio already normalizes upload lookups, but
-    restore paths passed the raw list to ``download()``, which prevented
-    persisted images and last-settings from being recovered after restart.
-    """
-
-    def find(self, *args, **kwargs):
-        result = super().find(*args, **kwargs)
-        if isinstance(result, (list, tuple)):
-            return result[0] if result else None
-        return result
+Mega = _vendor.Mega
 
 
 def _install_hashcash_retry() -> None:
