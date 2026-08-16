@@ -36,9 +36,9 @@ def ask_secret(name: str, prompt: str, required: bool = True) -> None:
 
 
 def install_requirements() -> None:
-    print("[setup] Instalando somente os pacotes diretos do estúdio…")
+    print("[setup] Atualizando a matriz direta Diffusers/Transformers/PEFT do estúdio…")
     subprocess.run([
-        sys.executable, "-m", "pip", "install", "-q", "--no-deps",
+        sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--no-deps",
         "-r", str(APP_DIR / "requirements.txt"),
     ], check=True)
 
@@ -58,7 +58,16 @@ def validate_runtime() -> None:
         )
     if not torch.cuda.is_available():
         raise RuntimeError("GPU CUDA não encontrada. Selecione T4 no Colab e reinicie o ambiente.")
-    print(f"[setup] Runtime validado: torch={torch.__version__}, diffusers={diffusers.__version__}, peft={peft.__version__}")
+    transformers_version = importlib.metadata.version("transformers")
+    if transformers_version != "4.48.3":
+        raise RuntimeError(
+            f"Transformers incompatível: encontrado {transformers_version}, esperado 4.48.3. "
+            "Reinicie o ambiente Colab e execute esta célula novamente."
+        )
+    print(
+        f"[setup] Runtime validado: torch={torch.__version__}, diffusers={diffusers.__version__}, "
+        f"transformers={transformers_version}, peft={peft.__version__}"
+    )
 
 
 def ensure_cloudflared() -> str:

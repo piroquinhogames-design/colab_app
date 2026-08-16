@@ -50,12 +50,14 @@ def main() -> None:
     launcher_source = (package_root / "launch_colab.py").read_text(encoding="utf-8")
     if "def validate_runtime()" not in launcher_source or "PEFT incompatível" not in launcher_source:
         raise AssertionError("O inicializador deve validar PEFT antes de iniciar o servidor")
-    if '"pip", "check"' in launcher_source or '"--upgrade",' in launcher_source:
-        raise AssertionError("O inicializador não deve falhar por conflitos globais nem forçar upgrades do Colab")
+    if '"pip", "check"' in launcher_source:
+        raise AssertionError("O inicializador não deve falhar por conflitos globais do Colab")
     if '"-m", "venv"' in launcher_source or "VENV_PYTHON" in launcher_source:
         raise AssertionError("O inicializador não pode depender de venv, pois ensurepip falha no Colab")
-    if '"--no-deps"' not in launcher_source:
+    if '"--upgrade", "--no-deps"' not in launcher_source:
         raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
+    if 'transformers_version != "4.48.3"' not in launcher_source:
+        raise AssertionError("O runtime deve confirmar a versão de Transformers compatível com PEFT")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
@@ -69,8 +71,8 @@ def main() -> None:
         launch_colab.APP_DIR = isolated_root
         launch_colab.subprocess.run = lambda command, **_: calls.append(command)
         launch_colab.install_requirements()
-        if len(calls) != 1 or calls[0][0] != sys.executable or "--no-deps" not in calls[0]:
-            raise AssertionError("O instalador deve chamar somente o pip global com --no-deps")
+        if len(calls) != 1 or calls[0][0] != sys.executable or "--no-deps" not in calls[0] or "--upgrade" not in calls[0]:
+            raise AssertionError("O instalador deve atualizar somente os pacotes diretos via pip global")
     finally:
         launch_colab.APP_DIR = original_app_dir
         launch_colab.subprocess.run = original_run
