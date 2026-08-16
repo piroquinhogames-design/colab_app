@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import requests
@@ -22,7 +23,7 @@ import requests
 
 APP_DIR = Path(__file__).resolve().parent
 PORT = os.environ.get("PORT", "7860")
-TUNNEL_PATTERN = re.compile(r"https://[-a-z0-9]+\.trycloudflare\.com", re.I)
+TUNNEL_PATTERN = re.compile(r"https://[-a-z0-9]+\.(?:ngrok-free\.app|ngrok\.io)", re.I)
 
 
 def ask_secret(name: str, prompt: str, required: bool = True) -> None:
@@ -76,17 +77,33 @@ def validate_runtime() -> None:
     )
 
 
-def ensure_cloudflared() -> str:
-    existing = shutil.which("cloudflared")
-    if existing:
+def ensure_ngrok() -> str:
+    existing = shutil.which("ngrok") or os.environ.get("NGROK_BIN")
+    if existing and Path(existing).exists():
         return existing
-    print("[setup] Instalando o cliente de túnel temporário…")
-    package = "/tmp/cloudflared.deb"
+    print("[setup] Instalando o cliente ngrok…")
+    archive = Path("/tmp/ngrok.zip")
+    binary = Path("/usr/local/bin/ngrok")
     subprocess.run([
-        "bash", "-lc",
-        "curl -L --fail --silent --show-error https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb && dpkg -i /tmp/cloudflared.deb",
+        "curl", "-L", "--fail", "--silent", "--show-error",
+        "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip",
+        "-o", str(archive),
     ], check=True)
-    return shutil.which("cloudflared") or "/usr/local/bin/cloudflared"
+    with zipfile.ZipFile(archive) as package:
+        package.extract("ngrok", "/tmp")
+    shutil.copy2("/tmp/ngrok", binary)
+    binary.chmod(0o755)
+    return str(binary)
+
+
+def configure_ngrok(ngrok: str) -> None:
+    token = os.environ.get("NGROK_AUTHTOKEN", "").strip()
+    if not token:
+        raise RuntimeError(
+            "NGROK_AUTHTOKEN não configurado. Crie um token em https://dashboard.ngrok.com/get-started/your-authtoken "
+            "e defina-o no Colab antes de executar o inicializador."
+        )
+    subprocess.run([ngrok, "config", "add-authtoken", token], check=True, capture_output=True, text=True)
 
 
 def pipe_output(process: subprocess.Popen[str], label: str, on_line=None) -> None:
@@ -123,7 +140,8 @@ def main() -> None:
 
     install_requirements()
     validate_runtime()
-    cloudflared = ensure_cloudflared()
+    ngrok = ensure_ngrok()
+    configure_ngrok(ngrok)
     print("[setup] Iniciando Illustrious LoRA Studio na GPU atual…")
     server = subprocess.Popen(
         [sys.executable, "server.py"], cwd=APP_DIR, text=True,
@@ -153,7 +171,7 @@ def main() -> None:
                 print("=" * 72 + "\n")
 
         tunnel = subprocess.Popen(
-            [cloudflared, "tunnel", "--url", f"http://127.0.0.1:{PORT}"], text=True,
+            [ngrok, "http", PORT, "--log=stdout", "--log-format=logfmt"], text=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         threading.Thread(target=pipe_output, args=(tunnel, "tunnel", capture_url), daemon=True).start()
@@ -163,7 +181,7 @@ def main() -> None:
         tunnel = start_tunnel()
         while server.poll() is None:
             if tunnel.poll() is not None:
-                print("[tunnel] O endereço anterior expirou; criando um novo Quick Tunnel…")
+                print("[tunnel] O ngrok encerrou; criando um novo endereço público…")
                 time.sleep(2)
                 tunnel = start_tunnel()
             time.sleep(1)
