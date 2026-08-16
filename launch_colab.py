@@ -144,11 +144,14 @@ def main() -> None:
     ask_secret("MEGA_EMAIL", "E-mail da conta MEGA: ")
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
-    ask_secret("ANIMA_ENGINE", "Engine Anima (diffusers ou Enter para configurar depois): ", required=False)
-    if os.environ.get("ANIMA_ENGINE", "").strip().lower() == "diffusers":
-        ask_secret("ANIMA_DIFFUSERS_REPO", "Repositório Diffusers Anima (Enter para configurar depois): ", required=False)
-    elif not os.environ.get("ANIMA_ENGINE"):
-        print("Aviso: Nova EXAnime AM é o padrão da família Anima, mas a geração ficará bloqueada até ANIMA_ENGINE e ANIMA_DIFFUSERS_REPO serem configurados.")
+
+    # Configuração técnica padronizada: usuários comuns não precisam conhecer
+    # engine, scheduler ou repositório Diffusers para iniciar o estúdio.
+    if not os.environ.get("ANIMA_ENGINE", "").strip():
+        os.environ["ANIMA_ENGINE"] = "diffusers"
+    if not os.environ.get("ANIMA_DIFFUSERS_REPO", "").strip():
+        os.environ["ANIMA_DIFFUSERS_REPO"] = "circlestone-labs/Anima-Base-v1.0-Diffusers"
+    print("[setup] Engine Anima padronizado; repositório Diffusers definido automaticamente.")
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
 

@@ -12,7 +12,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, a senha do painel, e-mail e senha do MEGA e, opcionalmente, seu token Civitai. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
+O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O engine Anima e o repositório Diffusers são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
 A instalação usa a matriz testada de **Transformers 4.48.3**, **Tokenizers 0.21.0**, **Diffusers 0.32.2**, **Accelerate 1.3.0**, **Hugging Face Hub 0.28.1**, **PEFT 0.17.0** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 
@@ -26,16 +26,9 @@ O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferec
 
 ## Modelo padrão: Nova EXAnime AM / Anima
 
-O perfil inicial é **Nova EXAnime AM**, obtido do modelo Civitai `2856434`, versão `3226184`, com base declarada como **Anima**. A família Anima não deve ser enviada ao `StableDiffusionXLPipeline`: ela possui arquitetura própria e usa um engine separado. Por esse motivo, o backend marca o perfil como `engine=anima` e bloqueia a geração com uma mensagem clara quando o engine Anima não está configurado, em vez de tentar carregar o arquivo como SDXL e falhar silenciosamente.
+O perfil inicial é **Nova EXAnime AM**, obtido do modelo Civitai `2856434`, versão `3226184`, com base declarada como **Anima**. A família Anima não deve ser enviada ao `StableDiffusionXLPipeline`: ela possui arquitetura própria e usa um engine separado. Por esse motivo, o backend marca o perfil como `engine=anima` e carrega a pipeline Diffusers Anima padronizada, em vez de tentar tratar o arquivo como SDXL e falhar silenciosamente.
 
-O checkpoint Civitai é usado como referência e download do perfil. Para gerar diretamente pelo backend Python, configure um repositório Anima em formato Diffusers e habilite o engine correspondente:
-
-```bash
-export ANIMA_ENGINE=diffusers
-export ANIMA_DIFFUSERS_REPO=SEU_REPOSITORIO_ANIMA_DIFFUSERS
-```
-
-O projeto também pode catalogar o perfil e organizar as lojas por Anima sem esse engine. Se o objetivo for usar o workflow nativo do checkpoint Civitai/ComfyUI, o catálogo e os filtros funcionam, mas a geração precisa ser conectada a um executor Anima/ComfyUI compatível em uma etapa própria.
+O checkpoint Civitai é usado como referência e download do perfil. O inicializador já define automaticamente `ANIMA_ENGINE=diffusers` e `ANIMA_DIFFUSERS_REPO=circlestone-labs/Anima-Base-v1.0-Diffusers`, portanto o usuário comum não precisa configurar essas variáveis. Usuários avançados ainda podem substituí-las antes de executar o inicializador, caso tenham um engine Diffusers Anima diferente.
 
 ## Configurações, famílias e presets
 
@@ -104,8 +97,8 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 | `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/3226184` |
 | `MODEL_PATH` | Cache local do perfil padrão | `/content/modellab-studio/models/nova_exanime_am.safetensors` |
 | `MODEL_FAMILY` | Família declarada do perfil padrão | `anima` |
-| `ANIMA_ENGINE` | Habilita o carregador Anima configurado | vazio; use `diffusers` quando houver repo compatível |
-| `ANIMA_DIFFUSERS_REPO` | Repositório Diffusers carregado pelo engine Anima | vazio |
+| `ANIMA_ENGINE` | Habilita o carregador Anima configurado | `diffusers` |
+| `ANIMA_DIFFUSERS_REPO` | Repositório Diffusers carregado pelo engine Anima | `circlestone-labs/Anima-Base-v1.0-Diffusers` |
 | `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
 | `STUDIO_ROOT` | Diretório temporário da sessão | `/content/modellab-studio` |
 | `PORT` | Porta local do Flask | `7860` |
