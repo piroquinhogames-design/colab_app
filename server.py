@@ -208,10 +208,33 @@ class MegaArchive:
 
     @staticmethod
     def _first_node(value: Any) -> Any:
-        """Normaliza find()/create_folder() para o nó que mega.py.upload espera."""
-        if isinstance(value, (list, tuple)):
-            return value[0] if value else None
+        """Obtém o identificador do primeiro resultado para operações de pasta/upload."""
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if isinstance(value, tuple) and len(value) == 2:
+            return value[0]
         return value
+
+    @staticmethod
+    def _download_node(value: Any) -> Any:
+        """Preserva o par ``(handle, atributos)`` exigido por mega.py.download()."""
+        if isinstance(value, list):
+            return value[0] if value else None
+        if isinstance(value, tuple) and len(value) == 2:
+            return value
+        if isinstance(value, dict) and isinstance(value.get("a"), dict):
+            handle = value.get("h")
+            return (handle, value) if handle else value
+        return value
+
+    @staticmethod
+    def _node_name(value: Any) -> str:
+        """Lê o nome tanto de um nó mega.py quanto do formato dos testes."""
+        node = value[1] if isinstance(value, tuple) and len(value) == 2 else value
+        if not isinstance(node, dict):
+            return ""
+        attributes = node.get("a")
+        return attributes.get("n", "") if isinstance(attributes, dict) else ""
 
     def _upload(self, path: Path) -> None:
         if not self.available or not self.client or not self.folder:
@@ -251,11 +274,11 @@ class MegaArchive:
 
     def save_last_settings(self, settings: dict[str, Any]) -> bool:
         """Substitui o manifesto único do último sinal renderizado no arquivo MEGA."""
-        if not self.available:
-            return False
         settings_path = OUTPUTS / LAST_SETTINGS_NAME
         payload = {"updated_at": now_iso(), "settings": settings}
         settings_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not self.available:
+            return False
         try:
             self._upload(settings_path)
             return True
@@ -270,7 +293,7 @@ class MegaArchive:
         cache = ROOT / "mega-cache"
         cache.mkdir(exist_ok=True)
         try:
-            node = self.client.find(LAST_SETTINGS_NAME)
+            node = self._download_node(self.client.find(LAST_SETTINGS_NAME))
             if not node:
                 return None
             downloaded = self.client.download(node, str(cache))
@@ -285,20 +308,35 @@ class MegaArchive:
             return None
 
     @staticmethod
-    def _file_nodes(value: Any) -> list[dict[str, Any]]:
-        """Extrai arquivos tanto de mapas planos quanto de árvores do mega.py."""
-        found: list[dict[str, Any]] = []
+    def _file_nodes(value: Any, handle: str | None = None) -> list[Any]:
+        """Extrai nós de arquivos de mapas planos, árvores e tuplas do mega.py."""
+        found: list[Any] = []
         if isinstance(value, dict):
             attributes = value.get("a")
             if isinstance(attributes, dict) and isinstance(attributes.get("n"), str):
-                found.append(value)
+                node_handle = value.get("h") or handle
+                found.append((node_handle, value) if node_handle else value)
             else:
-                for child in value.values():
-                    found.extend(MegaArchive._file_nodes(child))
+                for key, child in value.items():
+                    found.extend(MegaArchive._file_nodes(child, str(key)))
         elif isinstance(value, (list, tuple)):
             for child in value:
-                found.extend(MegaArchive._file_nodes(child))
+                found.extend(MegaArchive._file_nodes(child, handle))
         return found
+
+    def sync_last_settings(self) -> bool:
+        """Reenvia o manifesto local quando o upload original ficou pendente."""
+        if not self.available or not self.client:
+            return False
+        settings_path = OUTPUTS / LAST_SETTINGS_NAME
+        if not settings_path.exists():
+            return False
+        try:
+            self._upload(settings_path)
+            return True
+        except Exception as exc:
+            self.error = f"Falha ao reenviar preferências ao MEGA: {str(exc)[:180]}"
+            return False
 
     def list_remote_metadata(self) -> list[dict[str, Any]]:
         if not self.available or not self.client:
@@ -309,7 +347,7 @@ class MegaArchive:
         try:
             files = self.client.get_files()
             for node in self._file_nodes(files):
-                name = node.get("a", {}).get("n", "")
+                name = self._node_name(node)
                 if name == LAST_SETTINGS_NAME or not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}\.json", name, re.I):
                     continue
                 try:
@@ -332,7 +370,7 @@ class MegaArchive:
         if not self.available or not self.client:
             return None
         try:
-            node = self.client.find(destination.name)
+            node = self._download_node(self.client.find(destination.name))
             if node:
                 downloaded = self.client.download(node, str(OUTPUTS))
                 result = Path(downloaded) if downloaded else destination
@@ -539,6 +577,22 @@ class JobManager:
             finally:
                 self.pending.task_done()
 
+    def sync_pending(self) -> tuple[int, int]:
+        """Reenvia PNGs e manifestos locais de jobs concluídos ainda pendentes."""
+        with self.lock:
+            pending = [
+                job for job in self.jobs.values()
+                if job.status == "completed" and not job.mega_synced
+            ]
+        synced = 0
+        for job in pending:
+            image = OUTPUTS / (job.filename or f"{job.id}.png")
+            if not image.exists():
+                continue
+            if self.archive.save_job(job, image):
+                synced += 1
+        return len(pending), synced
+
     def public_jobs(self) -> list[dict[str, Any]]:
         with self.lock:
             return [job.public() for job in sorted(self.jobs.values(), key=lambda item: item.created_at, reverse=True)]
@@ -740,11 +794,18 @@ def history():
 @authentication_required
 @csrf_required
 def history_sync():
+    if not archive.available:
+        archive.connect()
+    pending, synced = manager.sync_pending()
+    last_settings_synced = archive.sync_last_settings()
     before = len(manager.jobs)
     manager.restore()
     return jsonify({
         "items": manager.public_jobs(),
         "restored": max(0, len(manager.jobs) - before),
+        "pending": pending,
+        "synced": synced,
+        "last_settings_synced": last_settings_synced,
         "archive": {"available": archive.available, "error": archive.error, "folder": MEGA_FOLDER},
     })
 

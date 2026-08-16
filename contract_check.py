@@ -146,22 +146,31 @@ def main() -> None:
     upload_destinations: list[object] = []
     class FakeMegaClient:
         def find(self, name):
-            return {"name": name} if name in remote else None
+            return (name, {"h": name, "a": {"n": name}}) if name in remote else None
         def destroy(self, node):
-            remote.pop(node["name"], None)
+            if isinstance(node, tuple):
+                name = node[1]["a"]["n"]
+            elif isinstance(node, str):
+                name = node
+            else:
+                name = node.get("name")
+            remote.pop(name, None)
         def upload(self, path, folder):
             upload_destinations.append(folder)
             remote[Path(path).name] = Path(path).read_bytes()
             return {"name": Path(path).name}
         def download(self, node, destination):
-            name = node.get("name") or node.get("a", {}).get("n")
+            if isinstance(node, tuple):
+                name = node[1]["a"]["n"]
+            else:
+                name = node.get("name") or node.get("a", {}).get("n")
             output = Path(destination) / name
             output.write_bytes(remote[name])
             return str(output)
         def get_files(self):
-            return {"folder": {"children": [{"a": {"n": name}} for name in remote]}}
+            return {name: {"h": name, "a": {"n": name}} for name in remote}
     archive = server.MegaArchive()
-    archive.available, archive.client, archive.folder = True, FakeMegaClient(), {"name": "IllustriousStudio", "h": "folder-node"}
+    archive.available, archive.client, archive.folder = True, FakeMegaClient(), "folder-node"
     remembered = {"prompt": "last signal", "negative_prompt": "lowres", "seed": 77, "steps": 30, "guidance": 7.0, "width": 1024, "height": 768, "strength": 0.65, "mode": "text2img", "loras": []}
     if not archive.save_last_settings(remembered):
         raise AssertionError("Últimas preferências devem ser salvas no arquivo MEGA")
@@ -216,12 +225,23 @@ def main() -> None:
     restored_image = client.get("/api/history/remote-job-0001/image")
     assert_equal(restored_image.status_code, 200, "Rota deve baixar PNG remoto quando não há cache local")
     assert_equal(restored_image.data, b"remote-png", "PNG remoto deve ser servido sem alteração")
+    pending_params = server.GenerationParams("pending", "none", 456, 24, 6.5, 512, 512, .65, "text2img", [])
+    pending_job = server.Job("pending-job", "2026-01-03T00:00:00+00:00", "completed", 100, pending_params, filename="pending-job.png", mega_synced=False)
+    pending_image = server.OUTPUTS / "pending-job.png"
+    pending_image.write_bytes(b"pending-png")
+    server.manager.jobs[pending_job.id] = pending_job
+
     frontend_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
     if "refreshHistory({sync: true})" not in frontend_source or "item.filename || item.id" not in frontend_source:
         raise AssertionError("Interface deve sincronizar e renderizar cards restaurados sem filename original")
     sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
     assert_equal(sync.status_code, 200, "Sincronização manual deve responder")
-    assert_equal(sync.get_json()["archive"]["available"], True, "Sincronização deve expor estado do arquivo")
+    sync_payload = sync.get_json()
+    assert_equal(sync_payload["archive"]["available"], True, "Sincronização deve expor estado do arquivo")
+    if sync_payload["synced"] < 1 or not pending_job.mega_synced:
+        raise AssertionError("Sincronização manual deve reenviar imagens concluídas que ficaram pendentes")
+    assert_equal(remote["pending-job.png"], b"pending-png", "Imagem pendente deve ser reenviada ao MEGA")
+    assert_equal(sync_payload["last_settings_synced"], True, "Sincronização manual deve reenviar o último prompt")
     print("CONTRATOS_COLAB_OK")
 
 

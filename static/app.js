@@ -228,7 +228,12 @@ async function refreshHistory({sync = false} = {}) {
     renderHistory(payload.items || []);
     $('#queue-readout').textContent = `${(payload.items || []).filter((item) => ['queued', 'running'].includes(item.status)).length} JOBS`;
     if (sync && payload.archive && !payload.archive.available) toast(payload.archive.error || 'MEGA indisponível para sincronização.', true);
-    else if (sync) toast(`${payload.restored || 0} registro(s) restaurado(s) do MEGA.`);
+    else if (sync) {
+      const synced = payload.synced || 0;
+      const restored = payload.restored || 0;
+      const prompt = payload.last_settings_synced ? ' último prompt atualizado.' : '';
+      toast(`${synced} imagem(ns) reenviada(s), ${restored} registro(s) restaurado(s).${prompt}`);
+    }
   } catch (error) { toast(error.message, true); }
 }
 
