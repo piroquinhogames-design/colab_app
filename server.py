@@ -173,6 +173,10 @@ class Job:
         return data
 
 
+class MegaHttpError(RuntimeError):
+    """Falha de transporte MEGA sem incluir cabeçalhos, corpo ou segredos."""
+
+
 class MegaArchive:
     """Adaptador mínimo que mantém imagens e metadados no mesmo diretório MEGA."""
 
@@ -187,11 +191,59 @@ class MegaArchive:
     @staticmethod
     def _connection_error(exc: Exception) -> str:
         detail = str(exc).strip()
+        if isinstance(exc, MegaHttpError):
+            return f"O login MEGA não retornou JSON válido ({detail}). Verifique a rede da sessão Colab e tente novamente."
         if isinstance(exc, json.JSONDecodeError) or "Expecting value" in detail:
             return "O MEGA devolveu uma resposta vazia ao autenticar. Verifique MEGA_EMAIL/MEGA_PASSWORD e tente uma nova sessão; isso não indica histórico vazio."
         if not detail:
             return "O MEGA encerrou a autenticação sem informar o motivo. Verifique as credenciais e a conexão da sessão Colab."
         return f"Não foi possível conectar ao MEGA: {detail[:180]}"
+
+    @staticmethod
+    def _login_with_http_adapter(email: str, password: str):
+        """Usa o protocolo da biblioteca, mas valida a resposta HTTP antes do JSON.
+
+        Algumas versões de ``mega.py`` chamam ``json.loads(req.text)`` diretamente.
+        Quando o Colab recebe uma página vazia/intermediária, isso oculta o status real
+        em ``Expecting value``. O adaptador preserva o cliente para criptografia e nós,
+        mas torna o transporte diagnosticável sem registrar resposta ou credenciais.
+        """
+        client = Mega()
+
+        def api_request(instance, data):
+            params = {"id": instance.sequence_num}
+            instance.sequence_num += 1
+            if getattr(instance, "sid", None):
+                params["sid"] = instance.sid
+            payload = data if isinstance(data, list) else [data]
+            response = requests.post(
+                f"{instance.schema}://g.api.{instance.domain}/cs",
+                params=params,
+                data=json.dumps(payload),
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Illustrious-LoRA-Studio/1.0",
+                },
+                timeout=getattr(instance, "timeout", 160),
+            )
+            body = response.text or ""
+            if response.status_code < 200 or response.status_code >= 300:
+                raise MegaHttpError(f"HTTP {response.status_code}; resposta com {len(body)} bytes")
+            if not body.strip():
+                raise MegaHttpError(f"HTTP {response.status_code}; resposta vazia")
+            try:
+                decoded = json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise MegaHttpError(f"HTTP {response.status_code}; resposta não JSON com {len(body)} bytes") from exc
+            if isinstance(decoded, int):
+                return decoded
+            if not isinstance(decoded, list) or not decoded:
+                raise MegaHttpError(f"HTTP {response.status_code}; formato JSON inesperado")
+            return decoded[0]
+
+        client._api_request = types.MethodType(api_request, client)
+        return client.login(email, password)
 
     def connect(self, attempts: int = 3, retry_delay: float = 1.0) -> bool:
         email = os.environ.get("MEGA_EMAIL", "").strip()
@@ -209,7 +261,7 @@ class MegaArchive:
             self.folder = None
             for attempt in range(max(1, attempts)):
                 try:
-                    client = Mega().login(email, password)
+                    client = self._login_with_http_adapter(email, password)
                     found = client.find(MEGA_FOLDER)
                     folder = self._first_node(found)
                     if not folder:

@@ -150,13 +150,13 @@ def main() -> None:
     if missing_credentials.available or "MEGA_EMAIL" not in (missing_credentials.error or ""):
         raise AssertionError("Credenciais ausentes devem manter MEGA indisponível com instrução segura")
     original_mega = server.Mega
+    original_login_adapter = server.MegaArchive._login_with_http_adapter
     original_email = os.environ.get("MEGA_EMAIL")
     original_password = os.environ.get("MEGA_PASSWORD")
-    class InvalidMega:
-        def login(self, *_args, **_kwargs):
-            raise ValueError("Invalid credentials for MEGA")
     try:
-        server.Mega = InvalidMega
+        server.MegaArchive._login_with_http_adapter = staticmethod(
+            lambda *_args: (_ for _ in ()).throw(ValueError("Invalid credentials for MEGA"))
+        )
         os.environ["MEGA_EMAIL"] = "user@example.invalid"
         os.environ["MEGA_PASSWORD"] = "not-a-real-password"
         invalid_credentials = server.MegaArchive()
@@ -167,6 +167,7 @@ def main() -> None:
             raise AssertionError("A mensagem MEGA não pode expor a senha")
     finally:
         server.Mega = original_mega
+        server.MegaArchive._login_with_http_adapter = original_login_adapter
         if original_email is None: os.environ.pop("MEGA_EMAIL", None)
         else: os.environ["MEGA_EMAIL"] = original_email
         if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
@@ -175,34 +176,65 @@ def main() -> None:
     class ReadyMegaClient:
         def find(self, _name):
             return {"name": "IllustriousStudio", "h": "folder-node"}
-    class FlakyMega:
-        calls = 0
-        def login(self, *_args, **_kwargs):
-            FlakyMega.calls += 1
-            if FlakyMega.calls == 1:
-                raise ValueError("Expecting value: line 1 column 1 (char 0)")
-            return ReadyMegaClient()
+    flaky_calls = {"count": 0}
+    def flaky_login(*_args):
+        flaky_calls["count"] += 1
+        if flaky_calls["count"] == 1:
+            raise server.MegaHttpError("HTTP 200; resposta vazia")
+        return ReadyMegaClient()
     try:
-        server.Mega = FlakyMega
+        server.MegaArchive._login_with_http_adapter = staticmethod(flaky_login)
         os.environ["MEGA_EMAIL"] = "user@example.invalid"
         os.environ["MEGA_PASSWORD"] = "not-a-real-password"
         retry_archive = server.MegaArchive()
         if not retry_archive.connect(attempts=2, retry_delay=0):
             raise AssertionError("O MEGA deve recuperar a conexão após uma resposta vazia transitória")
-        assert_equal(FlakyMega.calls, 2, "O login MEGA deve repetir a tentativa transitória")
+        assert_equal(flaky_calls["count"], 2, "O login MEGA deve repetir a tentativa transitória")
         if not retry_archive.available or not retry_archive.ensure_connected():
             raise AssertionError("Reconexão bem-sucedida deve manter o arquivo MEGA disponível")
     finally:
         server.Mega = original_mega
+        server.MegaArchive._login_with_http_adapter = original_login_adapter
         if original_email is None: os.environ.pop("MEGA_EMAIL", None)
         else: os.environ["MEGA_EMAIL"] = original_email
         if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
         else: os.environ["MEGA_PASSWORD"] = original_password
 
+    class HttpMega:
+        def __init__(self):
+            self.schema, self.domain, self.sequence_num = "https", "mega.test", 7
+            self.timeout, self.sid = 1, None
+        def login(self, *_args):
+            self._api_request({"a": "us"})
+            return self
+    class HttpResponse:
+        def __init__(self, status_code, text):
+            self.status_code, self.text = status_code, text
+    request_log = []
+    original_post = server.requests.post
+    try:
+        server.Mega = HttpMega
+        server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or HttpResponse(200, ""))
+        try:
+            server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
+            raise AssertionError("Resposta HTTP vazia deve falhar antes do parse JSON")
+        except server.MegaHttpError as error:
+            if "HTTP 200; resposta vazia" not in str(error):
+                raise AssertionError("O adaptador deve informar status HTTP para resposta vazia")
+        server.requests.post = lambda *args, **kwargs: (request_log.append((args, kwargs)) or HttpResponse(200, "[{}]"))
+        server.MegaArchive._login_with_http_adapter("user@example.invalid", "not-a-real-password")
+        if not request_log or request_log[-1][1]["headers"]["Content-Type"] != "application/json":
+            raise AssertionError("O adaptador MEGA deve enviar JSON com cabeçalho explícito")
+    finally:
+        server.Mega = original_mega
+        server.requests.post = original_post
+
     remote: dict[str, bytes] = {}
     upload_destinations: list[object] = []
     class FakeMegaClient:
         def find(self, name):
+            if name == server.MEGA_FOLDER:
+                return {"name": name, "h": "folder-node"}
             return {"name": name} if name in remote else None
         def destroy(self, node):
             remote.pop(node["name"], None)
@@ -255,6 +287,39 @@ def main() -> None:
     synced = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
     assert_equal(synced.status_code, 200, "Sincronização manual do histórico deve responder")
     assert_equal(synced.get_json()["restored"], 1, "Sincronização manual deve informar jobs restaurados")
+
+    reconnect_calls = {"count": 0}
+    def authenticated_remote_client(*_args):
+        reconnect_calls["count"] += 1
+        return FakeMegaClient()
+    original_email = os.environ.get("MEGA_EMAIL")
+    original_password = os.environ.get("MEGA_PASSWORD")
+    original_login_adapter = server.MegaArchive._login_with_http_adapter
+    try:
+        os.environ["MEGA_EMAIL"] = "user@example.invalid"
+        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
+        server.MegaArchive._login_with_http_adapter = staticmethod(authenticated_remote_client)
+        reconnect_archive = server.MegaArchive()
+        server.archive = reconnect_archive
+        server.manager.archive = reconnect_archive
+        server.manager.jobs.clear()
+        reconnected_bootstrap = client.get("/api/bootstrap")
+        assert_equal(reconnected_bootstrap.status_code, 200, "Bootstrap deve conectar e restaurar preferências do MEGA")
+        assert_equal(reconnected_bootstrap.get_json()["last_settings"], remembered, "Bootstrap autenticado deve restaurar o último prompt remoto")
+        reconnected_sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
+        assert_equal(reconnected_sync.get_json()["restored"], 1, "Sincronização deve restaurar histórico após login HTTP")
+        image_path.unlink(missing_ok=True)
+        restored_image = client.get("/api/history/job-contract/image")
+        assert_equal(restored_image.status_code, 200, "Rota de imagem deve recuperar o PNG remoto após login HTTP")
+        assert_equal(restored_image.get_data(), b"fake-png-bytes", "PNG remoto deve ser devolvido sem alterar seus bytes")
+        if reconnect_calls["count"] != 1:
+            raise AssertionError("Bootstrap e sincronização devem reutilizar a sessão MEGA autenticada")
+    finally:
+        server.MegaArchive._login_with_http_adapter = original_login_adapter
+        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
+        else: os.environ["MEGA_EMAIL"] = original_email
+        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
+        else: os.environ["MEGA_PASSWORD"] = original_password
     print("CONTRATOS_COLAB_OK")
 
 
