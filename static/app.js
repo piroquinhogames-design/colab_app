@@ -8,6 +8,8 @@ const state = {
   activeJobId: null,
   pollTimer: null,
   toastTimer: null,
+  archiveTimer: null,
+  archiveReady: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -225,6 +227,34 @@ function renderHistory(items) {
   grid.innerHTML = complete.length ? complete.map(imageCard).join('') : '<div class="empty-history"><span>///</span><p>O arquivo ainda não contém sinais gerados.</p></div>';
 }
 
+function setArchiveState(archive) {
+  if (!archive) return;
+  const available = Boolean(archive.available);
+  const ready = archive.ready !== false;
+  $('#archive-readout').textContent = available ? `MEGA // ${archive.folder || 'IllustriousStudio'}` : (ready ? 'MEGA // INDISPONÍVEL' : 'MEGA // CONECTANDO');
+  $('#archive-readout').style.color = available ? 'var(--acid)' : (ready ? 'var(--danger)' : 'var(--muted)');
+}
+
+async function refreshArchiveState() {
+  try {
+    const payload = await api('/api/bootstrap');
+    setArchiveState(payload.archive);
+    const ready = payload.archive?.ready !== false;
+    if (!ready) return;
+    clearInterval(state.archiveTimer);
+    state.archiveTimer = null;
+    const wasReady = state.archiveReady;
+    state.archiveReady = true;
+    if (payload.archive?.available && !wasReady) {
+      restoreLastSettings(payload.last_settings);
+      await refreshHistory({sync: true});
+      log('Conexão MEGA concluída; histórico, imagens pendentes e último prompt atualizados automaticamente.');
+    }
+  } catch {
+    // O bootstrap inicial continua funcional; a próxima tentativa fará a atualização.
+  }
+}
+
 async function refreshHistory({sync = false} = {}) {
   try {
     const payload = await api(sync ? '/api/history/sync' : '/api/history', sync ? {method: 'POST'} : {});
@@ -308,9 +338,15 @@ async function bootstrap() {
     const payload = await api('/api/bootstrap');
     state.csrf = payload.csrf;
     setNode(true);
-    $('#archive-readout').textContent = payload.archive.available ? `MEGA // ${payload.archive.folder}` : 'MEGA // INDISPONÍVEL';
-    $('#archive-readout').style.color = payload.archive.available ? 'var(--acid)' : 'var(--danger)';
-    if (!payload.archive.available) log(payload.archive.error || 'Arquivo MEGA ainda não foi conectado.');
+    setArchiveState(payload.archive);
+    state.archiveReady = payload.archive?.ready === true;
+    if (!payload.archive.available && payload.archive?.ready !== true) {
+      log('Arquivo MEGA conectando em segundo plano; a galeria local continua disponível.');
+      clearInterval(state.archiveTimer);
+      state.archiveTimer = setInterval(refreshArchiveState, 1500);
+    } else if (!payload.archive.available) {
+      log(payload.archive.error || 'Arquivo MEGA indisponível; a galeria local continua disponível.');
+    }
     restoreLastSettings(payload.last_settings);
     if (payload.last_settings_source === 'mega') log('Manifesto de preferências recuperado do MEGA.');
     renderHistory(payload.jobs || []);

@@ -749,7 +749,10 @@ def bootstrap():
     last_settings = archive.load_last_settings()
     return jsonify({
         "csrf": session.get("csrf"), "jobs": manager.public_jobs(),
-        "archive": {"available": archive.available, "error": archive.error, "folder": MEGA_FOLDER},
+        "archive": {
+            "available": archive.available, "ready": archive_ready.is_set(),
+            "error": archive.error, "folder": MEGA_FOLDER,
+        },
         "last_settings": last_settings,
         "last_settings_source": "mega" if last_settings else None,
         "limits": {"maxLoras": MAX_LORAS, "sizes": list(range(512, 1025, 64))},

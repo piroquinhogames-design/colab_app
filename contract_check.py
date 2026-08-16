@@ -70,10 +70,15 @@ def main() -> None:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
     if "archive-initializer" not in server_source or "archive_ready" not in server_source:
         raise AssertionError("A conexão MEGA deve ocorrer sem bloquear a abertura do servidor")
+    if '"ready": archive_ready.is_set()' not in server_source:
+        raise AssertionError("O bootstrap deve expor quando a preparação do MEGA terminou")
     if "_prepare_lora_file" not in server_source or "_is_unsupported_lora_key" not in server_source:
         raise AssertionError("O servidor deve preparar LoRAs com metadados alpha incompatíveis")
     if not server.GeneratorEngine._is_unsupported_lora_key("lora_unet_label_emb_0_0.alpha"):
         raise AssertionError("A chave alpha problemática deve ser identificada")
+    app_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
+    if "refreshArchiveState" not in app_source or "refreshHistory({sync: true})" not in app_source:
+        raise AssertionError("O frontend deve atualizar e sincronizar o arquivo quando o MEGA conectar depois do bootstrap")
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
 
