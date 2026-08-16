@@ -20,17 +20,55 @@ A instalação usa a matriz testada de **Transformers 4.48.3**, **Tokenizers 0.2
 
 ## Interface e geração
 
-O painel usa a identidade **ModelLab Studio**, com tema escuro, camadas translúcidas, reflexos e animações suaves inspiradas na linguagem visual *liquid glass*. O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferece remix e possui um botão de exclusão que remove o registro local e, quando sincronizado, o PNG e o manifesto correspondente do MEGA.
+O painel usa a identidade **ModelLab Studio**, com tema escuro, camadas translúcidas, reflexos e animações suaves inspiradas na linguagem visual *liquid glass*. A escolha do checkpoint e do sampler foi retirada do formulário principal e está na aba **CONFIGURAÇÕES**. O painel principal mostra apenas o modelo ativo e a família em uso.
 
-O primeiro render pode levar mais tempo porque o checkpoint é baixado e carregado. Depois disso, o modelo fica em cache no disco da sessão. O catálogo mostra LoRAs cujo modelo-base devolvido pelo Civitai é **Illustrious**. Até três LoRAs podem ser usadas simultaneamente, com pesos entre 0 e 1,5. Para conteúdo marcado como adulto, é necessário habilitar **INCLUIR +18** e configurar `CIVITAI_TOKEN`; a disponibilidade continua sujeita às permissões da conta Civitai e às regras do próprio serviço.
+O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferece remix e possui um botão de exclusão que remove o registro local e, quando sincronizado, o PNG e o manifesto correspondente do MEGA.
 
-## Perfis de modelo
+## Modelo padrão: Nova EXAnime AM / Anima
 
-O backend não presume que todo checkpoint possui os mesmos defaults. Cada perfil declara família, caminho, URL e parâmetros iniciais. O painel recebe esses perfis no bootstrap, atualiza steps, guidance, strength e sampler ao trocar de modelo e envia o identificador selecionado com o job. O servidor valida a família antes de enfileirar e descarta ou troca a pipeline somente quando o checkpoint selecionado é diferente do que está em VRAM.
+O perfil inicial é **Nova EXAnime AM**, obtido do modelo Civitai `2856434`, versão `3226184`, com base declarada como **Anima**. A família Anima não deve ser enviada ao `StableDiffusionXLPipeline`: ela possui arquitetura própria e usa um engine separado. Por esse motivo, o backend marca o perfil como `engine=anima` e bloqueia a geração com uma mensagem clara quando o engine Anima não está configurado, em vez de tentar carregar o arquivo como SDXL e falhar silenciosamente.
 
-Por padrão existe um único perfil **WAI-illustrious-SDXL**. Isso mantém o projeto focado em variantes Illustrious sem prometer um checkpoint universal para anatomia. Outros checkpoints podem ser experimentados sem reestruturar o projeto por meio de `MODELS_CONFIG`, desde que sejam compatíveis com o motor SDXL/Illustrious configurado.
+O checkpoint Civitai é usado como referência e download do perfil. Para gerar diretamente pelo backend Python, configure um repositório Anima em formato Diffusers e habilite o engine correspondente:
 
-Exemplo de configuração com uma segunda variante local ou baixável:
+```bash
+export ANIMA_ENGINE=diffusers
+export ANIMA_DIFFUSERS_REPO=SEU_REPOSITORIO_ANIMA_DIFFUSERS
+```
+
+O projeto também pode catalogar o perfil e organizar as lojas por Anima sem esse engine. Se o objetivo for usar o workflow nativo do checkpoint Civitai/ComfyUI, o catálogo e os filtros funcionam, mas a geração precisa ser conectada a um executor Anima/ComfyUI compatível em uma etapa própria.
+
+## Configurações, famílias e presets
+
+Os modelos ficam ocultos no formulário principal e são administrados pela aba **CONFIGURAÇÕES**. O sistema expõe perfis com família, engine, base, disponibilidade, cache local, defaults e notas. Ao trocar o modelo, steps, guidance, strength e sampler são atualizados automaticamente; o identificador escolhido acompanha o job.
+
+| Família | Engine | Defaults iniciais | Loja de LoRAs |
+|---|---|---|---|
+| `anima` | `anima` | 40 steps, CFG 4.5, Euler a | Anima |
+| `sdxl-illustrious` | `sdxl` | 28 steps, CFG 6.5, Euler a | Illustrious |
+| `pony` | `sdxl` | 30 steps, CFG 5.5, Euler a | Pony |
+| `sdxl` | `sdxl` | 28 steps, CFG 6.5, Euler a | SDXL 1.0 |
+| `flux` | engine separado | 28 steps, CFG 3.5 | Flux |
+| `sd3` | engine separado | 28 steps, CFG 5.0 | SD 3 |
+
+Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los pelo pipeline SDXL. Isso evita incompatibilidades de arquitetura. A família `anima` também bloqueia img2img até que exista um workflow Anima específico configurado.
+
+## Loja de modelos Civitai
+
+A aba **CONFIGURAÇÕES → ABRIR LOJA DE MODELOS** consulta checkpoints no Civitai com busca por nome, autor, tag, família, ordenação, paginação e opção de conteúdo adulto condicionado ao `CIVITAI_TOKEN`. O usuário pode filtrar Anima, Illustrious/NoobAI, Pony, SDXL, Flux e SD3.
+
+Ao escolher **USAR ESTE PERFIL**, o servidor registra o modelo selecionado na sessão e a interface aplica imediatamente a família, engine, base, sampler, steps, guidance, strength e filtros de loja correspondentes. A URL do modelo e a versão do Civitai ficam associadas ao perfil para que o checkpoint seja baixado sob demanda quando o engine suportar a família.
+
+## Loja de LoRAs e Loja de Prompts
+
+A loja de LoRAs começa em **Anima**, pois essa é a família do Nova EXAnime AM. Ao mudar o checkpoint para Pony, Illustrious ou SDXL, a busca usa automaticamente o `baseModels` correspondente e a interface atualiza o rótulo da família. Até três LoRAs podem ser usadas simultaneamente, com pesos entre 0 e 1,5.
+
+A Loja de Prompts também recebe a família ativa. Ela usa metadados de recursos do Civitai quando disponíveis para descartar imagens associadas a outra família, preserva busca por texto, tags combináveis, ordenação e remix, e embaralha localmente os resultados quando o modo **ALEATÓRIO** é usado. Isso produz variação real sem perder os filtros de família.
+
+Para conteúdo marcado como adulto, é necessário habilitar **INCLUIR +18** e configurar `CIVITAI_TOKEN`; a disponibilidade continua sujeita às permissões da conta Civitai e às regras do próprio serviço. Use apenas personagens claramente adultos.
+
+## Perfis customizados
+
+Outros checkpoints podem ser adicionados por `MODELS_CONFIG`. O perfil herda automaticamente os defaults da família e pode substituí-los quando necessário:
 
 ```bash
 export MODELS_CONFIG='[
@@ -40,34 +78,36 @@ export MODELS_CONFIG='[
     "family": "sdxl-illustrious",
     "base": "Illustrious",
     "url": "https://civitai.com/api/download/models/SEU_VERSION_ID",
-    "path": "/content/illustrious-studio/models/nova-anime-xl.safetensors",
+    "path": "/content/modellab-studio/models/nova-anime-xl.safetensors",
     "defaults": {"steps": 28, "guidance": 6.0, "strength": 0.65, "sampler": "euler_a"},
     "notes": "Preset opcional para avaliação manual."
   }
 ]'
 ```
 
-Os samplers aceitos atualmente são `euler_a` e `dpmpp_2m`. Se um perfil usar outra família, ele será recusado antes da geração com uma mensagem explícita, em vez de produzir um erro opaco no worker.
+Os samplers aceitos pelo contrato atual são `euler_a`, `euler`, `dpmpp_2m` e `dpmpp_2m_sde_gpu`. O servidor valida a família e o engine antes de enfileirar; quando o engine não está disponível, retorna uma mensagem explícita.
 
 ## Arquivo persistente e exclusão
 
-Ao concluir um job, o servidor grava uma PNG e um JSON de metadados com prompt, seed, checkpoint, sampler, parâmetros, LoRAs, data e estado. Ambos são enviados para `MEGA_FOLDER`, que agora usa `ModelLabStudio` por padrão. O manifesto `last_settings.json` preserva o último prompt, modelo, sampler e parâmetros reutilizáveis. Na abertura de uma nova sessão, os JSONs remotos reconstroem a galeria e uma imagem é restaurada sob demanda quando não existe no cache local.
+Ao concluir um job, o servidor grava uma PNG e um JSON de metadados com prompt, seed, checkpoint, sampler, parâmetros, LoRAs, data e estado. Ambos são enviados para `MEGA_FOLDER`, que usa `ModelLabStudio` por padrão. O manifesto `last_settings.json` preserva o último prompt, modelo, sampler e parâmetros reutilizáveis.
 
 A exclusão exige CSRF, bloqueia jobs em execução e confirma a remoção remota antes de retirar um item sincronizado da interface. Se o MEGA estiver indisponível, o app preserva o registro sincronizado e informa que é necessário reconectar; isso evita deixar uma cópia remota esquecida.
 
-## Configuração opcional
+## Variáveis de ambiente
 
 Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segredos dentro de `server.py`, `app.js` ou no repositório.
 
 | Variável | Finalidade | Padrão |
 |---|---|---|
 | `MEGA_FOLDER` | Pasta remota para imagens e metadados | `ModelLabStudio` |
-| `MODEL_ID` | Identificador do perfil padrão | `wai-illustrious` |
-| `MODEL_URL` | Endpoint de download do perfil padrão | versão WAI-illustrious-SDXL configurada no servidor |
-| `MODEL_PATH` | Cache local do perfil padrão | `/content/illustrious-studio/models/waiIllustriousSDXL_v170.safetensors` |
-| `MODEL_FAMILY` | Família declarada do perfil padrão | `sdxl-illustrious` |
+| `MODEL_ID` | Identificador do perfil padrão | `nova-exanime-am` |
+| `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/3226184` |
+| `MODEL_PATH` | Cache local do perfil padrão | `/content/modellab-studio/models/nova_exanime_am.safetensors` |
+| `MODEL_FAMILY` | Família declarada do perfil padrão | `anima` |
+| `ANIMA_ENGINE` | Habilita o carregador Anima configurado | vazio; use `diffusers` quando houver repo compatível |
+| `ANIMA_DIFFUSERS_REPO` | Repositório Diffusers carregado pelo engine Anima | vazio |
 | `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
-| `STUDIO_ROOT` | Diretório temporário da sessão | `/content/illustrious-studio` |
+| `STUDIO_ROOT` | Diretório temporário da sessão | `/content/modellab-studio` |
 | `PORT` | Porta local do Flask | `7860` |
 
 ## Limites operacionais

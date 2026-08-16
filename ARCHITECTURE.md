@@ -2,25 +2,52 @@
 
 O pacote é executado integralmente em uma sessão Google Colab com GPU T4. O processo Flask serve a interface, recebe solicitações autenticadas, gerencia uma única fila de geração e publica a porta local por meio de um Quick Tunnel. Nenhuma chave de Civitai, credencial MEGA ou senha do estúdio é enviada ao navegador.
 
+## Interface e seleção de família
+
+O formulário principal mostra somente o modelo ativo. Checkpoint, sampler e loja de modelos ficam no diálogo **Configurações**. O bootstrap envia os perfis públicos com família, base, engine, disponibilidade, cache e defaults. A interface aplica o preset do perfil e atualiza automaticamente os rótulos e as lojas de LoRAs e prompts.
+
+O perfil inicial é `nova-exanime-am`, com base `Anima`, URL de download Civitai para a versão `3226184` e engine `anima`. Anima não passa pelo carregador `StableDiffusionXLPipeline`; sem `ANIMA_ENGINE=diffusers` e `ANIMA_DIFFUSERS_REPO`, o perfil continua selecionável e pesquisável, mas a geração é bloqueada com uma mensagem explicativa. Isso evita tratar uma arquitetura Anima como SDXL por acidente.
+
+## Catálogo Civitai
+
+A rota `GET /api/model-catalog` consulta checkpoints Civitai com query, tag, família, ordenação, paginação e filtro adulto. A base Civitai é traduzida por `civitai_base_for_family`: Anima, Illustrious/NoobAI, Pony, SDXL, Flux e SD 3. Cada versão é convertida em um perfil público com família, engine, defaults e arquivo principal.
+
+A rota `POST /api/model-profile` recebe somente o identificador numérico do modelo/versão e cria um perfil interno validado pelo servidor. A seleção é mantida em `MODEL_SPECS` e serializada em `model_profiles.json` dentro de `STUDIO_ROOT`, permitindo que o catálogo selecionado sobreviva ao reinício do processo. A URL de download é construída no servidor a partir do version ID, não aceita uma URL arbitrária enviada pelo navegador.
+
+## Lojas dependentes da família
+
+A rota `GET /api/catalog` inicia em `family=anima` e converte a família para o parâmetro `baseModels` da API Civitai. Quando o modelo muda, o frontend envia a nova família, atualiza a loja de LoRAs e limita os resultados às versões cujo `baseModel` seja compatível.
+
+A rota `GET /api/prompt-store` também recebe a família ativa. O servidor consulta imagens com metadados, extrai recursos Civitai, prompts, dimensões e LoRAs, filtra recursos de outra família quando há informação suficiente e embaralha os itens no modo `Random`. A busca textual combina prompt, negative prompt, autor, tags e família; os filtros de chips são combinados como interseção.
+
+## Engines e perfis
+
+O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Para `anima`, exige o engine Diffusers Anima configurado antes de iniciar; não há fallback silencioso para SDXL. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
+
+| Família | Engine | Loja de LoRAs | Estado padrão |
+|---|---|---|---|
+| `anima` | `anima` | Anima | Selecionável; geração exige engine configurado |
+| `sdxl-illustrious` | `sdxl` | Illustrious | Geração disponível com pipeline SDXL |
+| `pony` | `sdxl` | Pony | Geração disponível com pipeline SDXL |
+| `sdxl` | `sdxl` | SDXL 1.0 | Geração disponível com pipeline SDXL |
+| `flux` | engine separado | Flux | Catalogável; geração bloqueada |
+| `sd3` | engine separado | SD 3 | Catalogável; geração bloqueada |
+
 ## Persistência
 
 Cada resultado gera dois arquivos: `outputs/<job_id>.png` e `outputs/<job_id>.json`. O JSON inclui identificador, data UTC, prompts, seed efetivamente usada, modelo, sampler, parâmetros, LoRAs, estado final e referências de armazenamento. Após uma geração bem-sucedida, os dois arquivos e o manifesto `last_settings.json` são enviados ao diretório configurado da conta MEGA. Ao inicializar uma nova sessão, o servidor recupera os JSONs para recompor a galeria; a imagem é baixada sob demanda apenas se não existir no cache local.
 
 A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execução não podem ser removidos. Para um job sincronizado, o servidor primeiro tenta excluir `<job_id>.png` e `<job_id>.json` no MEGA; somente após essa confirmação remove o cache local e o registro em memória. Se o arquivo remoto estiver indisponível, a operação é recusada para evitar exclusão incompleta.
 
-## Perfis de modelo
-
-O manifesto `MODEL_SPECS` é criado a partir do perfil padrão e, opcionalmente, de `MODELS_CONFIG`. Cada perfil declara `id`, `name`, `family`, `base`, `url`, `path`, `defaults` e `notes`. O bootstrap expõe os perfis ao frontend. A seleção altera os defaults de steps, guidance, strength e sampler; o backend valida a família e o sampler novamente antes de enfileirar.
-
-O `GeneratorEngine` mantém uma pipeline SDXL em cache. Ao receber outro `model_id`, descarrega referências da pipeline anterior, libera o cache CUDA, garante que o novo checkpoint esteja disponível e cria as pipelines text-to-image e image-to-image. A implementação atualmente habilita famílias `sdxl`, `sdxl-illustrious` e `illustrious`, com samplers `euler_a` e `dpmpp_2m`. Um perfil de outra família é recusado explicitamente, evitando que uma LoRA ou scheduler incompatível falhe de forma silenciosa no worker.
+## Recursos e proteção
 
 | Recurso | Rota ou armazenamento | Proteção |
 |---|---|---|
 | Interface e API | Processo Flask na porta 7860 | Login por senha e sessão HTTP-only |
 | Geração | Fila de um trabalhador no processo Colab | Somente usuário autenticado; uma tarefa ativa por vez |
-| Perfis de checkpoint | `MODEL_SPECS` em memória e `MODELS_CONFIG` no ambiente | Download autenticado feito somente pelo servidor |
-| Checkpoint padrão | `/content/illustrious-studio/models` | Carregamento preguiçoso e troca sob demanda |
-| LoRAs | `/content/illustrious-studio/loras` | Catálogo Civitai e download executados somente pelo servidor |
+| Perfis de checkpoint | `MODEL_SPECS`, `MODELS_CONFIG` e `model_profiles.json` | IDs Civitai validados no servidor |
+| Checkpoints | `STUDIO_ROOT/models` | Download executado somente pelo servidor |
+| LoRAs | `STUDIO_ROOT/loras` | Catálogo Civitai e download executados somente pelo servidor |
 | Resultados e metadata | Conta MEGA em `MEGA_FOLDER` | Credenciais exclusivas do processo Colab |
 | Exclusão | `DELETE /api/history/<job_id>` | Sessão autenticada, CSRF e confirmação remota |
 
@@ -34,12 +61,12 @@ O `GeneratorEngine` mantém uma pipeline SDXL em cache. Ao receber outro `model_
   "params": {
     "prompt": "...",
     "negative_prompt": "...",
-    "model": "wai-illustrious",
+    "model": "nova-exanime-am",
     "sampler": "euler_a",
     "seed": 123456,
     "mode": "text2img | img2img",
-    "steps": 28,
-    "guidance": 6.5,
+    "steps": 40,
+    "guidance": 4.5,
     "width": 1024,
     "height": 1024,
     "strength": 0.65,
@@ -50,4 +77,4 @@ O `GeneratorEngine` mantém uma pipeline SDXL em cache. Ao receber outro `model_
 }
 ```
 
-O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels, 10–60 steps e escala de guidance entre 1 e 15. Esses limites foram escolhidos para manter os jobs previsíveis em uma T4. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.
+O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels, 10–60 steps e escala de guidance entre 1 e 15. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.

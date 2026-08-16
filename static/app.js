@@ -6,6 +6,8 @@ const state = {
   editLevel: 'medium',
   selectedLoras: [],
   catalogCursor: null,
+  modelStoreCursor: null,
+  modelStoreItems: [],
   promptStoreCursor: null,
   promptStoreItems: [],
   promptFilters: new Set(),
@@ -83,6 +85,9 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
   const model = state.models.find((item) => item.id === modelId) || state.models[0];
   if (!model) return;
   const defaults = model.defaults || {};
+  if ($('#model') && $('#model').value !== model.id) $('#model').value = model.id;
+  if ($('#settings-model')) $('#settings-model').value = model.id;
+  const family = String(model.family || 'sdxl').toUpperCase();
   if (applyDefaults) {
     [['steps', defaults.steps], ['guidance', defaults.guidance], ['strength', defaults.strength]].forEach(([id, value]) => {
       if (value === undefined || !$(`#${id}`)) return;
@@ -91,12 +96,19 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
       if (output) output.value = value;
     });
     if (defaults.sampler && $('#sampler')) $('#sampler').value = defaults.sampler;
+    if (defaults.sampler && $('#settings-sampler')) $('#settings-sampler').value = defaults.sampler;
   }
   const badge = $('#model-badge');
-  if (badge) badge.textContent = `${String(model.family || 'SDXL').toUpperCase()} // ${model.cached ? 'CACHE LOCAL' : 'DOWNLOAD SOB DEMANDA'}`;
+  if (badge) badge.textContent = `${family} // ${model.ready === false ? 'ENGINE PENDENTE' : (model.cached ? 'CACHE LOCAL' : 'DOWNLOAD SOB DEMANDA')}`;
   const engine = $('#engine-readout');
   if (engine) engine.textContent = String(model.name || model.id).slice(0, 32).toUpperCase();
-  if (!silent) log(`Perfil ${model.name || model.id} selecionado; defaults adaptativos aplicados.`);
+  if ($('#active-model-name')) $('#active-model-name').textContent = String(model.name || model.id).toUpperCase();
+  if ($('#active-model-help')) $('#active-model-help').textContent = `${family} // ${model.engine || 'ENGINE'} // ${model.notes || 'defaults adaptativos ativos.'}`;
+  if ($('#settings-model-info')) $('#settings-model-info').textContent = `${family} // base ${model.base || '--'} // ${model.notes || 'perfil adaptativo'}`;
+  if ($('#settings-engine-status')) $('#settings-engine-status').textContent = `ENGINE // ${String(model.engine || '--').toUpperCase()} // ${model.ready === false ? 'PENDENTE' : 'READY'}`;
+  if ($('#catalog-family-label')) $('#catalog-family-label').textContent = family;
+  if ($('#prompt-family-label')) $('#prompt-family-label').textContent = family;
+  if (!silent) log(`Perfil ${model.name || model.id} selecionado; defaults adaptativos e lojas ${family} aplicados.`);
 }
 
 function renderModels(models, selectedId = '') {
@@ -104,11 +116,14 @@ function renderModels(models, selectedId = '') {
   const select = $('#model');
   if (!select) return;
   if (!state.models.length) {
-    state.models = [{id: 'wai-illustrious', name: 'WAI-illustrious-SDXL', family: 'sdxl-illustrious', cached: false, defaults: {steps: 28, guidance: 6.5, strength: .65, sampler: 'euler_a'}}];
+    state.models = [{id: 'nova-exanime-am', name: 'Nova EXAnime AM', family: 'anima', base: 'Anima', engine: 'anima', ready: false, cached: false, defaults: {steps: 40, guidance: 4.5, strength: .65, sampler: 'euler_a'}}];
   }
-  select.innerHTML = state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)}${model.cached ? ' · CACHE' : ''}</option>`).join('');
+  const options = state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)} · ${escapeHtml(String(model.family || 'sdxl').toUpperCase())}</option>`).join('');
+  select.innerHTML = options;
+  if ($('#settings-model')) $('#settings-model').innerHTML = options;
   const initial = selectedId && state.models.some((item) => item.id === selectedId) ? selectedId : state.models[0].id;
   select.value = initial;
+  if ($('#settings-model')) $('#settings-model').value = initial;
   updateModelProfile(initial, {silent: true});
 }
 
@@ -193,7 +208,7 @@ function addLora(lora) {
 function renderCatalog(items) {
   const grid = $('#catalog-grid');
   if (!items.length) {
-    grid.innerHTML = '<p class="catalog-empty">Nenhum LoRA Illustrious corresponde aos filtros atuais.</p>';
+    grid.innerHTML = `<p class="catalog-empty">Nenhum LoRA ${escapeHtml(String($('#catalog-family-label')?.textContent || 'compatível'))} corresponde aos filtros atuais.</p>`;
     return;
   }
   grid.innerHTML = items.map((item) => {
@@ -241,11 +256,63 @@ function bindCatalogActions() {
   }));
 }
 
+function renderModelStore(items) {
+  const grid = $('#model-store-grid');
+  if (!items.length) {
+    grid.innerHTML = '<p class="catalog-empty">Nenhum checkpoint compatível foi encontrado. Tente outra família ou termo.</p>';
+    return;
+  }
+  grid.innerHTML = items.map((item) => `
+    <article class="catalog-card model-store-card">
+      ${item.image ? `<img loading="lazy" src="${escapeHtml(item.image)}" alt="Preview de ${escapeHtml(item.name)}" referrerpolicy="no-referrer" />` : '<div class="model-card-placeholder">MODEL // PREVIEW</div>'}
+      <span class="model-family-pill">${escapeHtml(String(item.family || item.base_model || 'MODEL').toUpperCase())}</span>
+      <h3>${escapeHtml(item.name || 'Checkpoint sem nome')}</h3>
+      <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
+      <small>${escapeHtml(item.version || 'versão principal')} // ${escapeHtml(item.base_model || '--')}</small>
+      <div class="catalog-card-actions"><button type="button" data-use-model='${escapeHtml(JSON.stringify(item))}'>USAR ESTE PERFIL</button><a class="civitai-link" href="https://civitai.red/models/${encodeURIComponent(item.civitai_model_id)}?modelVersionId=${encodeURIComponent(item.version_id)}" target="_blank" rel="noopener noreferrer">ABRIR NO CIVITAI ↗</a></div>
+    </article>`).join('');
+  $$('[data-use-model]').forEach((button) => button.addEventListener('click', () => {
+    try { useModelFromStore(JSON.parse(button.dataset.useModel)); } catch { toast('Não foi possível interpretar este perfil de modelo.', true); }
+  }));
+}
+
+async function useModelFromStore(item) {
+  try {
+    const profile = await api('/api/model-profile', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(item)});
+    const selected = [...state.models.filter((model) => model.id !== profile.id), profile];
+    renderModels(selected, profile.id);
+    updateModelProfile(profile.id, {applyDefaults: true});
+    $('#model-store-dialog').close();
+    $('#settings-dialog').showModal();
+    toast(`${profile.name} aplicado // família ${String(profile.family).toUpperCase()}.`);
+    log(`Perfil Civitai carregado: ${profile.name}. As lojas foram trocadas para ${String(profile.family).toUpperCase()}.`);
+  } catch (error) { toast(error.message, true); }
+}
+
+async function loadModelStore({append = false} = {}) {
+  const button = $('#search-model-store');
+  button.disabled = true;
+  const params = new URLSearchParams({
+    query: $('#model-store-query').value.trim(), tag: $('#model-store-tag').value.trim(), family: $('#model-store-family').value,
+    sort: $('#model-store-sort').value, limit: '24', include_adult: $('#model-store-adult').checked ? 'true' : 'false',
+  });
+  if (append && state.modelStoreCursor) params.set('cursor', state.modelStoreCursor);
+  try {
+    const payload = await api(`/api/model-catalog?${params}`);
+    state.modelStoreCursor = payload.next_cursor || null;
+    state.modelStoreItems = append ? [...state.modelStoreItems, ...(payload.items || [])] : (payload.items || []);
+    renderModelStore(state.modelStoreItems);
+    $('#next-model-store').disabled = !state.modelStoreCursor;
+    $('#model-store-note').textContent = `${(payload.items || []).length} checkpoints encontrados // base ${payload.base_model || 'todas'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'}`;
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+}
+
 async function loadCatalog({append = false} = {}) {
   const button = $('#search-catalog');
   button.disabled = true;
   const params = new URLSearchParams({
-    query: $('#catalog-query').value.trim(), tag: $('#catalog-tag').value.trim(),
+    query: $('#catalog-query').value.trim(), tag: $('#catalog-tag').value.trim(), family: state.models.find((model) => model.id === $('#model').value)?.family || 'anima',
     sort: $('#catalog-sort').value, limit: '24', include_adult: $('#catalog-adult').checked ? 'true' : 'false',
   });
   if (append && state.catalogCursor) params.set('cursor', state.catalogCursor);
@@ -264,7 +331,7 @@ async function loadCatalog({append = false} = {}) {
     }
     $('#next-catalog').disabled = !state.catalogCursor;
     const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
-    $('#catalog-note').textContent = `${payload.items.length} sinais encontrados // base Illustrious${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'} // ${authState}`;
+    $('#catalog-note').textContent = `${payload.items.length} sinais encontrados // base ${payload.base_model || 'compatível'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'} // ${authState}`;
   } catch (error) {
     toast(error.message, true);
   } finally { button.disabled = false; }
@@ -324,6 +391,15 @@ async function remixPromptStoreItem(index) {
   } catch (error) { toast(error.message, true); }
 }
 
+function shufflePromptItems(items) {
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
+}
+
 async function loadPromptStore({append = false, random = false} = {}) {
   const button = $('#search-prompt-store');
   button.disabled = true;
@@ -332,15 +408,18 @@ async function loadPromptStore({append = false, random = false} = {}) {
     query: $('#prompt-store-query').value.trim(), sort: $('#prompt-store-sort').value,
     limit: '24', include_adult: $('#prompt-store-adult').checked ? 'true' : 'false',
     filters: [...state.promptFilters].join(','),
+    family: state.models.find((model) => model.id === $('#model').value)?.family || 'anima',
   });
   if (append && state.promptStoreCursor) params.set('cursor', state.promptStoreCursor);
   try {
     const payload = await api(`/api/prompt-store?${params}`);
+    const randomMode = $('#prompt-store-sort').value === 'Random';
+    const incomingItems = randomMode ? shufflePromptItems(payload.items || []) : (payload.items || []);
     state.promptStoreCursor = payload.next_cursor || null;
-    renderPromptStore(payload.items || [], {append});
+    renderPromptStore(incomingItems, {append});
     $('#next-prompt-store').disabled = !state.promptStoreCursor;
     const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
-    $('#prompt-store-note').textContent = `${(payload.items || []).length} prompts encontrados // ${$('#prompt-store-sort').value === 'Random' ? 'ordem aleatória' : 'ordem por relevância'} // ${state.promptFilters.size ? `filtros: ${[...state.promptFilters].join(' + ')} // ` : ''}${payload.includes_adult ? '+18 INCLUÍDO' : 'MODO PADRÃO'} // ${authState}`;
+    $('#prompt-store-note').textContent = `${incomingItems.length} prompts encontrados // ${String(payload.family || 'anima').toUpperCase()} // ${randomMode ? 'ordem aleatória renovada' : 'ordem por relevância'} // ${state.promptFilters.size ? `filtros: ${[...state.promptFilters].join(' + ')} // ` : ''}${payload.includes_adult ? '+18 INCLUÍDO' : 'MODO PADRÃO'} // ${authState}`;
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
 }
@@ -576,12 +655,34 @@ function restoreLastSettings(settings) {
   return applyLastSettings(settings, { query: $, state, renderSelectedLoras, setMode, setEditLevel, log });
 }
 
+function activeModel() {
+  return state.models.find((model) => model.id === $('#model')?.value) || state.models[0] || {family: 'anima'};
+}
+
+function openModelSettings() {
+  updateModelProfile($('#model')?.value, {silent: true, applyDefaults: false});
+  $('#settings-dialog').showModal();
+}
+
+function openModelStore() {
+  const family = String(activeModel().family || 'anima');
+  const familySelect = $('#model-store-family');
+  if (familySelect && [...familySelect.options].some((option) => option.value === family)) familySelect.value = family;
+  state.modelStoreCursor = null;
+  state.modelStoreItems = [];
+  $('#model-store-dialog').showModal();
+  loadModelStore();
+}
+
 function bindEvents() {
   $$('.mode').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
   $$('.edit-level').forEach((button) => button.addEventListener('click', () => setEditLevel(button.dataset.editLevel)));
   $$('.tag-bank button').forEach((button) => button.addEventListener('click', () => appendTag(button.dataset.target, button.textContent)));
   $('#source-image').addEventListener('change', (event) => { $('#upload-name').textContent = event.target.files[0] ? event.target.files[0].name : 'NENHUM ARQUIVO NO BUFFER'; });
   $('#model').addEventListener('change', (event) => updateModelProfile(event.target.value));
+  $('#settings-model').addEventListener('change', (event) => { $('#model').value = event.target.value; updateModelProfile(event.target.value); });
+  $('#sampler').addEventListener('change', (event) => { if ($('#settings-sampler')) $('#settings-sampler').value = event.target.value; });
+  $('#settings-sampler').addEventListener('change', (event) => { $('#sampler').value = event.target.value; });
   $('#generation-form').addEventListener('submit', submitJob);
   $('#open-catalog').addEventListener('click', () => { $('#catalog-dialog').showModal(); loadCatalog(); });
   $('#close-catalog').addEventListener('click', () => $('#catalog-dialog').close());
@@ -594,6 +695,17 @@ function bindEvents() {
   }));
   $('#catalog-adult').addEventListener('change', () => { state.catalogCursor = null; $('#next-catalog').disabled = true; });
   $('#next-catalog').addEventListener('click', () => loadCatalog({append: true}));
+  $('#open-model-settings').addEventListener('click', openModelSettings);
+  $('#open-model-settings-inline').addEventListener('click', openModelSettings);
+  $('#close-model-settings').addEventListener('click', () => $('#settings-dialog').close());
+  $('#open-model-store').addEventListener('click', openModelStore);
+  $('#close-model-store').addEventListener('click', () => $('#model-store-dialog').close());
+  $('#search-model-store').addEventListener('click', () => { state.modelStoreCursor = null; loadModelStore(); });
+  $('#model-store-family').addEventListener('change', () => { state.modelStoreCursor = null; loadModelStore(); });
+  $('#model-store-sort').addEventListener('change', () => { state.modelStoreCursor = null; loadModelStore(); });
+  $('#model-store-adult').addEventListener('change', () => { state.modelStoreCursor = null; loadModelStore(); });
+  ['#model-store-query', '#model-store-tag'].forEach((selector) => $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); state.modelStoreCursor = null; loadModelStore(); } }));
+  $('#next-model-store').addEventListener('click', () => loadModelStore({append: true}));
   const openPromptStore = () => { state.promptStoreCursor = null; $('#prompt-store-dialog').showModal(); loadPromptStore(); };
   $('#open-prompt-store').addEventListener('click', openPromptStore);
   $('#open-prompt-store-top').addEventListener('click', openPromptStore);

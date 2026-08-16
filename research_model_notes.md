@@ -16,4 +16,4 @@ Não existe fundamento para prometer um modelo “perfeito” para anatomia. A i
 
 ## Decisão
 
-Não adicionar automaticamente um segundo checkpoint pesado ao inicializador neste momento. Em vez disso, implementar um manifesto de modelos configuráveis via `MODELS_CONFIG`/`MODEL_URL`/`MODEL_PATH`, um perfil de parâmetros por modelo e um modo de seleção do checkpoint que permita experimentar Nova Anime XL ou outras variantes depois, sem reestruturar o app. O preset inicial pode permanecer WAI-illustrious-SDXL, com uma entrada opcional de Nova Anime XL documentada e desativada por padrão.
+Nota histórica superseded: a implementação posterior substituiu o padrão anterior por **Nova EXAnime AM / Anima**, manteve o manifesto configurável via `MODELS_CONFIG`/`MODEL_URL`/`MODEL_PATH` e adicionou lojas dependentes da família. Nova Anime XL permanece apenas como referência de pesquisa, não como padrão ativo.

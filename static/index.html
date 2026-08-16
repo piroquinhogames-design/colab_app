@@ -18,7 +18,7 @@
         <span class="glitch mini-glitch" data-text="MODELLAB">MODELLAB</span>
         <small>Studio</small>
       </a>
-      <nav class="top-nav" aria-label="Navegação principal"><button id="open-prompt-store-top" class="top-nav-button" type="button">✦ LOJA DE PROMPTS</button></nav>
+      <nav class="top-nav" aria-label="Navegação principal"><button id="open-model-settings" class="top-nav-button" type="button">⚙ CONFIGURAÇÕES</button><button id="open-prompt-store-top" class="top-nav-button" type="button">✦ LOJA DE PROMPTS</button></nav>
       <div class="node-status" id="node-status">
         <i></i><span>NODE // VERIFICANDO</span>
       </div>
@@ -44,18 +44,13 @@
             </div>
           </div>
 
-          <div class="model-control">
-            <div>
-              <label class="field-label" for="model">CHECKPOINT / FAMÍLIA</label>
-              <select id="model" name="model" aria-describedby="model-help"></select>
-              <small id="model-help">Os controles são ajustados pelo perfil do checkpoint para reduzir incompatibilidades entre variantes SDXL.</small>
-              <span id="model-badge" class="model-badge">PERFIL ADAPTATIVO ATIVO</span>
-            </div>
-            <div>
-              <label class="field-label" for="sampler">SAMPLER</label>
-              <select id="sampler" name="sampler"><option value="euler_a">Euler a</option><option value="dpmpp_2m">DPM++ 2M</option></select>
-              <small>O backend pode ignorar opções não suportadas sem quebrar a fila.</small>
-            </div>
+          <div class="model-context panel-inset">
+            <div><span class="field-label">MODELO ATIVO</span><strong id="active-model-name">NOVA EXANIME AM</strong><small id="active-model-help">Família Anima // defaults adaptativos ativos.</small></div>
+            <div class="model-context-status"><span id="model-badge" class="model-badge">ANIMA // PERFIL ADAPTATIVO</span><button id="open-model-settings-inline" type="button" class="text-button">⚙ CONFIGURAR</button></div>
+          </div>
+          <div class="model-control hidden" aria-hidden="true">
+            <select id="model" name="model"></select>
+            <select id="sampler" name="sampler"><option value="euler_a">Euler a</option><option value="euler">Euler</option><option value="dpmpp_2m">DPM++ 2M</option><option value="dpmpp_2m_sde_gpu">DPM++ 2M SDE GPU</option></select>
           </div>
 
           <label class="field-label" for="prompt">PROMPT PRINCIPAL</label>
@@ -122,15 +117,30 @@
       </section>
     </main>
 
+    <dialog id="settings-dialog" class="settings-dialog">
+      <div class="dialog-top"><div><p class="eyebrow">[ MODELLAB / ENGINE CONTROL ]</p><h2>CONFIGURAÇÕES</h2><p class="store-lead">O checkpoint e o sampler ficam aqui para manter o painel de geração limpo. Ao trocar o modelo, os defaults e as lojas acompanham a família automaticamente.</p></div><button id="close-model-settings" type="button" class="close-button" aria-label="Fechar configurações">×</button></div>
+      <section class="settings-section panel-inset">
+        <div class="settings-grid"><div><label class="field-label" for="settings-model">CHECKPOINT / FAMÍLIA</label><select id="settings-model"></select><p id="settings-model-info" class="settings-help"></p></div><div><label class="field-label" for="settings-sampler">SAMPLER RECOMENDADO</label><select id="settings-sampler"><option value="euler_a">Euler a</option><option value="euler">Euler</option><option value="dpmpp_2m">DPM++ 2M</option><option value="dpmpp_2m_sde_gpu">DPM++ 2M SDE GPU</option></select><p class="settings-help">O sampler é sincronizado com o campo interno usado pela geração.</p></div></div>
+        <div class="settings-actions"><button id="open-model-store" type="button" class="signal-button small">ABRIR LOJA DE MODELOS</button><span id="settings-engine-status" class="settings-status">ENGINE // --</span></div>
+      </section>
+    </dialog>
+
+    <dialog id="model-store-dialog" class="model-store-dialog">
+      <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / CHECKPOINT MARKET ]</p><h2>LOJA DE MODELOS</h2><p class="store-lead">Pesquise checkpoints por família. Ao instalar um perfil, o ModelLab aplica automaticamente engine, sampler, steps, CFG e filtros de LoRA compatíveis.</p></div><button id="close-model-store" type="button" class="close-button" aria-label="Fechar loja de modelos">×</button></div>
+      <div class="catalog-filters model-store-filters"><input id="model-store-query" type="search" placeholder="BUSCAR CHECKPOINT OU AUTOR" /><input id="model-store-tag" type="text" placeholder="TAG OPCIONAL" /><select id="model-store-family" aria-label="Família do modelo"><option value="">TODAS AS FAMÍLIAS</option><option value="anima" selected>ANIMA</option><option value="sdxl-illustrious">ILLUSTRIOUS / NOOBAI</option><option value="pony">PONY</option><option value="sdxl">SDXL</option><option value="flux">FLUX</option><option value="sd3">SD 3</option></select><select id="model-store-sort"><option value="Most Downloaded">MAIS BAIXADOS</option><option value="Highest Rated">MELHOR AVALIADOS</option><option value="Newest">MAIS NOVOS</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="model-store-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="search-model-store" class="signal-button small" type="button">CONSULTAR</button></div>
+      <div id="model-store-grid" class="catalog-grid"><p class="catalog-empty">Escolha uma família para consultar checkpoints.</p></div>
+      <div class="catalog-footer"><span id="model-store-note">Família inicial: Anima // Nova EXAnime AM.</span><button id="next-model-store" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
+    </dialog>
+
     <dialog id="catalog-dialog" class="catalog-dialog">
-      <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / CHECKPOINT ECOSYSTEM ]</p><h2>LOJA DE ADAPTADORES</h2></div><button id="close-catalog" type="button" class="close-button" aria-label="Fechar catálogo">×</button></div>
+      <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / <span id="catalog-family-label">ANIMA</span> ECOSYSTEM ]</p><h2>LOJA DE ADAPTADORES</h2><p class="store-lead">A loja acompanha a família do checkpoint ativo e prioriza LoRAs com base compatível.</p></div><button id="close-catalog" type="button" class="close-button" aria-label="Fechar catálogo">×</button></div>
       <div class="catalog-filters"><input id="catalog-query" type="search" placeholder="BUSCAR NOME OU ESTILO" /><input id="catalog-tag" type="text" placeholder="TAG OPCIONAL" /><select id="catalog-sort"><option value="Most Downloaded">MAIS BAIXADOS</option><option value="Highest Rated">MELHOR AVALIADOS</option><option value="Newest">MAIS NOVOS</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="catalog-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="search-catalog" class="signal-button small" type="button">CONSULTAR</button></div>
       <div id="catalog-grid" class="catalog-grid"><p class="catalog-empty">Abra o catálogo para localizar LoRAs compatíveis.</p></div>
-      <div class="catalog-footer"><span id="catalog-note">O catálogo consulta exclusivamente LoRAs com base Illustrious.</span><button id="next-catalog" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
+      <div class="catalog-footer"><span id="catalog-note">A loja inicia em Anima e acompanha o checkpoint ativo.</span><button id="next-catalog" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
     </dialog>
 
     <dialog id="prompt-store-dialog" class="prompt-store-dialog">
-      <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / PROMPT MARKET ]</p><h2>LOJA DE PROMPTS</h2><p class="store-lead">Descubra imagens com metadados disponíveis e remixe prompt, seed, LoRAs e composição em uma segunda versão.</p></div><button id="close-prompt-store" type="button" class="close-button" aria-label="Fechar Loja de Prompts">×</button></div>
+      <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / <span id="prompt-family-label">ANIMA</span> PROMPT MARKET ]</p><h2>LOJA DE PROMPTS</h2><p class="store-lead">Descubra imagens com metadados disponíveis e remixe prompt, seed, LoRAs e composição em uma segunda versão.</p></div><button id="close-prompt-store" type="button" class="close-button" aria-label="Fechar Loja de Prompts">×</button></div>
       <div class="prompt-store-filters">
         <div class="prompt-store-search"><input id="prompt-store-query" type="search" placeholder="BUSCAR PROMPT, ESTILO OU AUTOR" /><button id="search-prompt-store" class="signal-button small" type="button">CONSULTAR</button></div>
         <div class="prompt-store-options"><select id="prompt-store-sort" aria-label="Ordenar Loja de Prompts"><option value="Most Reactions">RELEVÂNCIA</option><option value="Random">ALEATÓRIO</option><option value="Newest">MAIS RECENTES</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="prompt-store-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="random-prompt-store" class="subtle-button" type="button">↝ SORTEAR</button></div>

@@ -19,6 +19,14 @@ export function restoreLastSettings(settings, dependencies) {
     const field = query(`#${elementId}`);
     if (settings[settingKey] !== undefined && field) field.value = settings[settingKey];
   });
+  if (settings.model !== undefined) {
+    const settingsModel = query('#settings-model');
+    if (settingsModel) settingsModel.value = settings.model;
+  }
+  if (settings.sampler !== undefined) {
+    const settingsSampler = query('#settings-sampler');
+    if (settingsSampler) settingsSampler.value = settings.sampler;
+  }
   ['steps', 'guidance', 'strength'].forEach((id) => {
     const output = query(`#${id}-value`);
     if (output && settings[id] !== undefined) output.value = settings[id];

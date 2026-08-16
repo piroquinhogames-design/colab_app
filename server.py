@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import queue
+import random
 import re
 import shutil
 import threading
@@ -50,28 +51,109 @@ for directory in (MODELS, LORAS, OUTPUTS, UPLOADS):
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MAX_LORAS = 3
 MODEL_URL = os.environ.get(
-    "MODEL_URL", "https://civitai.com/api/download/models/2883731"
+    "MODEL_URL", "https://civitai.com/api/download/models/3226184"
 )
-MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "waiIllustriousSDXL_v170.safetensors"))
-DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "wai-illustrious")
+MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "nova_exanime_am.safetensors"))
+DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "nova-exanime-am")
 MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "ModelLabStudio")
 CIVITAI_BASE = "https://civitai.com/api/v1"
 LAST_SETTINGS_NAME = "last_settings.json"
-SUPPORTED_MODEL_FAMILIES = {"sdxl", "sdxl-illustrious", "illustrious"}
-SUPPORTED_SAMPLERS = {"euler_a", "dpmpp_2m"}
+MODEL_PROFILE_CACHE = ROOT / "model_profiles.json"
+
+# A família controla tanto a busca de LoRAs quanto os defaults enviados ao motor.
+# Anima tem arquitetura própria; o engine é marcado explicitamente para impedir que
+# um checkpoint Anima seja tratado como SDXL por acidente.
+ANIMA_ENGINE = os.environ.get("ANIMA_ENGINE", "").strip()
+
+MODEL_FAMILY_PROFILES: dict[str, dict[str, Any]] = {
+    "anima": {
+        "base": "Anima", "engine": "anima", "lora_base": "Anima",
+        "defaults": {"steps": 40, "guidance": 4.5, "strength": 0.65, "sampler": "euler_a"},
+        "notes": "Arquitetura Anima; use LoRAs treinadas para Anima/Base ou uma variante explicitamente compatível.",
+    },
+    "sdxl-illustrious": {
+        "base": "Illustrious", "engine": "sdxl", "lora_base": "Illustrious",
+        "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
+        "notes": "SDXL derivado de Illustrious; compatível com a maioria das LoRAs Illustrious quando a variante coincide.",
+    },
+    "pony": {
+        "base": "Pony", "engine": "sdxl", "lora_base": "Pony",
+        "defaults": {"steps": 30, "guidance": 5.5, "strength": 0.65, "sampler": "euler_a"},
+        "notes": "SDXL derivado de Pony; requer LoRAs e tags compatíveis com Pony.",
+    },
+    "sdxl": {
+        "base": "SDXL 1.0", "engine": "sdxl", "lora_base": "SDXL 1.0",
+        "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
+        "notes": "SDXL convencional.",
+    },
+    "flux": {
+        "base": "Flux", "engine": "unsupported", "lora_base": "Flux",
+        "defaults": {"steps": 28, "guidance": 3.5, "strength": 0.65, "sampler": "euler_a"},
+        "notes": "Catalogável, mas exige um engine Flux separado antes de gerar.",
+    },
+    "sd3": {
+        "base": "SD 3", "engine": "unsupported", "lora_base": "SD 3",
+        "defaults": {"steps": 28, "guidance": 5.0, "strength": 0.65, "sampler": "euler_a"},
+        "notes": "Catalogável, mas exige um engine SD3 separado antes de gerar.",
+    },
+}
+SUPPORTED_MODEL_FAMILIES = set(MODEL_FAMILY_PROFILES)
+SUPPORTED_SAMPLERS = {"euler_a", "euler", "dpmpp_2m", "dpmpp_2m_sde_gpu"}
+
+
+def normalize_model_family(base_model: str | None) -> str:
+    value = re.sub(r"[^a-z0-9]+", " ", str(base_model or "").lower()).strip()
+    if "anima" in value:
+        return "anima"
+    if "pony" in value:
+        return "pony"
+    if "illustrious" in value or "noobai" in value or "noob ai" in value:
+        return "sdxl-illustrious"
+    if "flux" in value:
+        return "flux"
+    if "sd 3" in value or "sd3" in value:
+        return "sd3"
+    if "sdxl" in value:
+        return "sdxl"
+    return "sdxl"
+
+
+def family_profile(family: str | None) -> dict[str, Any]:
+    normalized = str(family or "sdxl").strip().lower()
+    return MODEL_FAMILY_PROFILES.get(normalized, MODEL_FAMILY_PROFILES["sdxl"])
+
+
+def civitai_base_for_family(family: str | None) -> str:
+    """Nome de base aceito pelo filtro baseModels da API do Civitai."""
+    return str(family_profile(family).get("lora_base", "SDXL 1.0"))
+
+
+def version_matches_family(version: dict[str, Any], family: str | None) -> bool:
+    expected = civitai_base_for_family(family).lower()
+    actual = str(version.get("baseModel") or "").lower()
+    if not actual:
+        return False
+    if expected == "sdxl 1.0":
+        return actual in {"sdxl 1.0", "sdxl"}
+    return expected in actual or actual in expected
 
 
 def _load_model_specs() -> dict[str, dict[str, Any]]:
-    """Carrega checkpoints SDXL compatíveis sem assumir que todo modelo usa o mesmo perfil."""
+    """Carrega checkpoints com perfil de família e defaults adaptativos."""
+    default_family = os.environ.get("MODEL_FAMILY", "anima").strip().lower()
+    base_profile = family_profile(default_family)
     default = {
         "id": DEFAULT_MODEL_ID,
-        "name": "WAI-illustrious-SDXL",
+        "name": "Nova EXAnime AM" if DEFAULT_MODEL_ID == "nova-exanime-am" else DEFAULT_MODEL_ID,
         "url": MODEL_URL,
         "path": str(MODEL_PATH),
-        "family": os.environ.get("MODEL_FAMILY", "sdxl-illustrious"),
-        "base": "Illustrious",
-        "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
-        "notes": "Perfil SDXL/Illustrious configurável por ambiente.",
+        "family": default_family,
+        "base": base_profile["base"],
+        "engine": base_profile["engine"],
+        "lora_base": base_profile["lora_base"],
+        "defaults": dict(base_profile["defaults"]),
+        "notes": base_profile["notes"],
+        "civitai_model_id": 2856434 if DEFAULT_MODEL_ID == "nova-exanime-am" else None,
     }
     specs: dict[str, dict[str, Any]] = {DEFAULT_MODEL_ID: default}
     raw = os.environ.get("MODELS_CONFIG", "").strip()
@@ -90,14 +172,36 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
             model_id = re.sub(r"[^a-z0-9._-]+", "-", str(candidate.get("id", "")).lower()).strip("-")
             if not model_id:
                 continue
-            profile = dict(default)
-            profile.update(candidate)
+            candidate_family = str(candidate.get("family") or normalize_model_family(candidate.get("base"))).strip().lower()
+            inherited = family_profile(candidate_family)
+            profile = {**default, **inherited, **candidate}
             profile["id"] = model_id
             profile["name"] = str(candidate.get("name") or model_id)[:120]
+            profile["family"] = candidate_family
             profile["path"] = str(candidate.get("path") or MODELS / f"{model_id}.safetensors")
-            profile["defaults"] = {**default["defaults"], **(candidate.get("defaults") or {})}
+            profile["defaults"] = {**inherited["defaults"], **(candidate.get("defaults") or {})}
             specs[model_id] = profile
     except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    try:
+        cached = json.loads(MODEL_PROFILE_CACHE.read_text(encoding="utf-8")) if MODEL_PROFILE_CACHE.exists() else []
+        candidates = cached.values() if isinstance(cached, dict) else cached
+        for candidate in candidates if isinstance(candidates, list) else []:
+            if not isinstance(candidate, dict):
+                continue
+            model_id = re.sub(r"[^a-z0-9._-]+", "-", str(candidate.get("id", "")).lower()).strip("-")
+            if not model_id or model_id == DEFAULT_MODEL_ID:
+                continue
+            candidate_family = str(candidate.get("family") or normalize_model_family(candidate.get("base"))).strip().lower()
+            inherited = family_profile(candidate_family)
+            profile = {**default, **inherited, **candidate}
+            profile["id"] = model_id
+            profile["name"] = str(candidate.get("name") or model_id)[:120]
+            profile["family"] = candidate_family
+            profile["path"] = str(candidate.get("path") or MODELS / f"{model_id}.safetensors")
+            profile["defaults"] = {**inherited["defaults"], **(candidate.get("defaults") or {})}
+            specs[model_id] = profile
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
         pass
     return specs
 
@@ -108,6 +212,20 @@ MODEL_SPECS = _load_model_specs()
 def get_model_spec(model_id: str | None = None) -> dict[str, Any]:
     selected = str(model_id or DEFAULT_MODEL_ID).strip().lower()
     return MODEL_SPECS.get(selected) or MODEL_SPECS[DEFAULT_MODEL_ID]
+
+
+def public_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    family = str(spec.get("family", "sdxl"))
+    engine = str(spec.get("engine") or family_profile(family).get("engine", "unsupported"))
+    ready = engine == "sdxl" or (engine == "anima" and bool(ANIMA_ENGINE))
+    return {
+        "id": spec["id"], "name": spec.get("name", spec["id"]),
+        "family": family, "base": spec.get("base", family_profile(family)["base"]),
+        "lora_base": spec.get("lora_base", civitai_base_for_family(family)),
+        "engine": engine, "ready": ready, "cached": Path(spec["path"]).exists(),
+        "defaults": spec.get("defaults", family_profile(family)["defaults"]),
+        "notes": spec.get("notes", ""), "civitai_model_id": spec.get("civitai_model_id"),
+    }
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config.update(
@@ -511,12 +629,31 @@ class GeneratorEngine:
             return
         if self.pipe is not None:
             self._release_pipeline()
-        model_path = self.ensure_checkpoint(spec)
         import torch
-        from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
 
         if not torch.cuda.is_available():
             raise RuntimeError("Nenhuma GPU CUDA foi detectada. Ative uma sessão T4 no Colab e reinicie o servidor.")
+        engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
+        if engine == "anima":
+            if ANIMA_ENGINE != "diffusers":
+                raise RuntimeError("O checkpoint é Anima, mas ANIMA_ENGINE não está configurado como diffusers. O arquivo Civitai é nativo de workflow Anima/ComfyUI.")
+            repo_id = str(spec.get("diffusers_repo") or os.environ.get("ANIMA_DIFFUSERS_REPO", "")).strip()
+            if not repo_id:
+                raise RuntimeError("Configure ANIMA_DIFFUSERS_REPO com um repositório Diffusers Anima antes de gerar.")
+            from diffusers import DiffusionPipeline
+            try:
+                self.pipe = DiffusionPipeline.from_pretrained(repo_id, torch_dtype=torch.bfloat16, device_map="cuda")
+                self.img_pipe = None
+                self.loaded_model_id = spec["id"]
+                return
+            except Exception:
+                self._release_pipeline()
+                raise
+
+        if engine != "sdxl":
+            raise RuntimeError(f"Engine {engine!r} ainda não está disponível para geração.")
+        model_path = self.ensure_checkpoint(spec)
+        from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
         try:
             self.pipe = StableDiffusionXLPipeline.from_single_file(
                 str(model_path), torch_dtype=torch.float16, use_safetensors=True
@@ -806,7 +943,12 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     model_spec = get_model_spec(requested_model)
     family = str(model_spec.get("family", "sdxl")).strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
-        raise ValueError(f"A família {family!r} não está habilitada neste motor. Use um perfil SDXL/Illustrious.")
+        raise ValueError(f"A família {family!r} não está habilitada neste motor.")
+    engine = str(model_spec.get("engine") or family_profile(family).get("engine", "unsupported"))
+    if engine == "unsupported":
+        raise ValueError(f"O modelo selecionado pertence à família {family}, mas esse engine ainda não está configurado no ModelLab.")
+    if engine == "anima" and not ANIMA_ENGINE:
+        raise ValueError("O modelo Anima está selecionado, mas o engine Anima ainda não foi configurado. Defina ANIMA_ENGINE ou escolha um modelo SDXL compatível.")
     sampler = str(raw.get("sampler") or model_spec.get("defaults", {}).get("sampler", "euler_a")).strip().lower()
     if sampler not in SUPPORTED_SAMPLERS:
         raise ValueError("Sampler não suportado pelo perfil atual.")
@@ -830,6 +972,8 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
         raise ValueError("Largura e altura devem ser múltiplos de 64 entre 512 e 1024.")
     if mode == "img2img" and not source_image:
         raise ValueError("Envie uma imagem-base para usar img2img.")
+    if family == "anima" and mode == "img2img":
+        raise ValueError("O modo img2img para Anima ainda depende de um workflow Anima compatível; use TXT→IMG por enquanto.")
     parsed_loras: list[LoRASelection] = []
     for candidate in raw.get("loras", [])[:MAX_LORAS]:
         try:
@@ -892,16 +1036,103 @@ def bootstrap():
         "last_settings": last_settings,
         "last_settings_source": "mega" if last_settings else None,
         "limits": {"maxLoras": MAX_LORAS, "sizes": list(range(512, 1025, 64))},
-        "models": [{
-            "id": spec["id"], "name": spec.get("name", spec["id"]), "family": spec.get("family", "sdxl"),
-            "base": spec.get("base", "SDXL"), "cached": Path(spec["path"]).exists(),
-            "defaults": spec.get("defaults", {}), "notes": spec.get("notes", ""),
-        } for spec in MODEL_SPECS.values()],
-        "model": {
-            "id": DEFAULT_MODEL_ID, "name": get_model_spec()["name"],
-            "cached": Path(get_model_spec()["path"]).exists(),
-        },
+        "models": [public_model_spec(spec) for spec in MODEL_SPECS.values()],
+        "model": public_model_spec(get_model_spec()),
     })
+
+
+@app.route("/api/model-catalog")
+@authentication_required
+def model_catalog():
+    include_adult = request.args.get("include_adult", "").strip().lower() in {"1", "true", "yes"}
+    if include_adult and not os.environ.get("CIVITAI_TOKEN", "").strip():
+        return jsonify({"error": "Defina CIVITAI_TOKEN no servidor para consultar conteúdo adulto autorizado."}), 400
+    try:
+        limit = min(max(int(request.args.get("limit", 24)), 1), 48)
+    except (TypeError, ValueError):
+        limit = 24
+    params: dict[str, Any] = {
+        "limit": limit, "types": "Checkpoint", "sort": request.args.get("sort", "Most Downloaded"),
+        "period": request.args.get("period", "AllTime"), "primaryFileOnly": "true",
+        "nsfw": "true" if include_adult else "false",
+    }
+    if request.args.get("cursor"):
+        params["cursor"] = request.args["cursor"]
+    if request.args.get("query"):
+        params["query"] = request.args["query"][:120]
+    if request.args.get("tag"):
+        params["tag"] = request.args["tag"][:80]
+    family_filter = request.args.get("family", "").strip().lower()
+    if family_filter in SUPPORTED_MODEL_FAMILIES:
+        params["baseModels"] = civitai_base_for_family(family_filter)
+    try:
+        response = requests.get(f"{CIVITAI_BASE}/models", params=params, headers=civitai_headers(), timeout=25)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        return jsonify({"error": f"Não foi possível consultar a loja de modelos Civitai: {str(exc)[:160]}"}), 502
+
+    items: list[dict[str, Any]] = []
+    for model in payload.get("items", []):
+        versions = [version for version in model.get("modelVersions", []) if version.get("modelType", "Checkpoint") == "Checkpoint"]
+        if family_filter in SUPPORTED_MODEL_FAMILIES:
+            versions = [version for version in versions if normalize_model_family(version.get("baseModel") or model.get("name")) == family_filter]
+        if not versions:
+            continue
+        version = versions[0]
+        files = version.get("files") or []
+        checkpoint_file = next((item for item in files if str(item.get("type", "")).lower() == "model" and str(item.get("name", "")).lower().endswith((".safetensors", ".ckpt"))), None)
+        inferred_family = normalize_model_family(version.get("baseModel") or model.get("name"))
+        profile = family_profile(inferred_family)
+        version_id = int(version.get("id") or 0)
+        model_numeric_id = int(model.get("id") or 0)
+        internal_id = re.sub(r"[^a-z0-9._-]+", "-", f"civitai-{model_numeric_id}-{version_id}".lower()).strip("-")
+        preview = next((image.get("url") for image in version.get("images", []) if image.get("url")), None)
+        items.append({
+            "id": internal_id, "civitai_model_id": model_numeric_id, "version_id": version_id,
+            "name": model.get("name") or internal_id, "version": version.get("name") or f"Versão {version_id}",
+            "creator": (model.get("creator") or {}).get("username"), "base_model": version.get("baseModel"),
+            "family": inferred_family, "engine": profile.get("engine"), "image": preview,
+            "downloads": (version.get("stats") or {}).get("downloadCount", 0), "mature": bool(model.get("nsfw")),
+            "cached": bool(checkpoint_file and (MODELS / f"{internal_id}.safetensors").exists()),
+            "file": checkpoint_file.get("name") if checkpoint_file else None,
+            "notes": profile.get("notes", ""), "defaults": profile.get("defaults", {}),
+        })
+    return jsonify({
+        "items": items, "next_cursor": (payload.get("metadata") or {}).get("nextCursor"),
+        "family": family_filter or "all", "base_model": civitai_base_for_family(family_filter) if family_filter else "all",
+        "includes_adult": include_adult, "catalog_query": {"authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
+    })
+
+
+@app.route("/api/model-profile", methods=["POST"])
+@authentication_required
+@csrf_required
+def model_profile():
+    payload = request.get_json(silent=True) or {}
+    try:
+        version_id = int(payload.get("version_id"))
+        civitai_model_id = int(payload.get("civitai_model_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Modelo Civitai inválido."}), 400
+    family = normalize_model_family(payload.get("family") or payload.get("base_model"))
+    profile = family_profile(family)
+    model_id = re.sub(r"[^a-z0-9._-]+", "-", f"civitai-{civitai_model_id}-{version_id}".lower()).strip("-")
+    spec = {
+        "id": model_id, "name": str(payload.get("name") or model_id)[:120],
+        "url": f"https://civitai.com/api/download/models/{version_id}",
+        "path": str(MODELS / f"{model_id}.safetensors"), "family": family,
+        "base": str(payload.get("base_model") or profile["base"]), "engine": profile["engine"],
+        "lora_base": profile["lora_base"], "defaults": {**profile["defaults"], **(payload.get("defaults") or {})},
+        "notes": profile["notes"], "civitai_model_id": civitai_model_id, "version_id": version_id,
+    }
+    MODEL_SPECS[model_id] = spec
+    try:
+        cached_profiles = [candidate for key, candidate in MODEL_SPECS.items() if key != DEFAULT_MODEL_ID]
+        MODEL_PROFILE_CACHE.write_text(json.dumps(cached_profiles, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+    return jsonify(public_model_spec(spec))
 
 
 @app.route("/api/catalog")
@@ -910,9 +1141,12 @@ def catalog():
     include_adult = request.args.get("include_adult", "").strip().lower() in {"1", "true", "yes"}
     if include_adult and not os.environ.get("CIVITAI_TOKEN", "").strip():
         return jsonify({"error": "Defina CIVITAI_TOKEN no servidor para consultar conteúdo adulto autorizado."}), 400
+    family = request.args.get("family", "anima").strip().lower()
+    if family not in SUPPORTED_MODEL_FAMILIES:
+        family = "anima"
     params: dict[str, Any] = {
         "limit": min(max(int(request.args.get("limit", 24)), 1), 48), "types": "LORA",
-        "baseModels": "Illustrious", "sort": request.args.get("sort", "Most Downloaded"),
+        "baseModels": civitai_base_for_family(family), "sort": request.args.get("sort", "Most Downloaded"),
         "period": request.args.get("period", "AllTime"), "primaryFileOnly": "true",
         "nsfw": "true" if include_adult else "false",
     }
@@ -930,7 +1164,7 @@ def catalog():
         return jsonify({"error": f"Não foi possível consultar o catálogo Civitai: {str(exc)[:160]}"}), 502
     items = []
     for model in payload.get("items", []):
-        versions = [item for item in model.get("modelVersions", []) if item.get("baseModel") == "Illustrious"]
+        versions = [item for item in model.get("modelVersions", []) if version_matches_family(item, family)]
         if not versions:
             continue
         version = versions[0]
@@ -950,6 +1184,7 @@ def catalog():
         })
     return jsonify({
         "items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"),
+        "family": family, "base_model": civitai_base_for_family(family),
         "includes_adult": include_adult, "catalog_query": {"nsfw": params["nsfw"], "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
     })
 
@@ -984,6 +1219,9 @@ def prompt_store():
     except (requests.RequestException, ValueError) as exc:
         return jsonify({"error": f"Não foi possível consultar a Loja de Prompts no Civitai: {str(exc)[:160]}"}), 502
 
+    family = request.args.get("family", "anima").strip().lower()
+    if family not in SUPPORTED_MODEL_FAMILIES:
+        family = "anima"
     search = request.args.get("query", "").strip().lower()[:120]
     filters = [term.strip().lower() for term in request.args.get("filters", "").split(",") if term.strip()][:8]
     items: list[dict[str, Any]] = []
@@ -1007,7 +1245,13 @@ def prompt_store():
                 "weight": float(resource.get("weight", 0.8) or 0.8),
             })
         tags = [str(tag) for tag in (image.get("tags") or [])]
-        haystack = " ".join([prompt, negative_prompt, str(image.get("username", "")), " ".join(tags)]).lower()
+        resource_families = {
+            normalize_model_family(resource.get("baseModel") or resource.get("modelName") or resource.get("modelVersionName"))
+            for resource in resources if isinstance(resource, dict)
+        }
+        if resource_families and family not in resource_families:
+            continue
+        haystack = " ".join([prompt, negative_prompt, str(image.get("username", "")), " ".join(tags), family]).lower()
         if search and search not in haystack:
             continue
         if filters and not all(term in haystack for term in filters):
@@ -1023,9 +1267,12 @@ def prompt_store():
             "tags": tags[:12], "loras": loras[:MAX_LORAS],
             "reactions": (image.get("stats") or {}).get("heartCount", 0),
         })
+    if sort == "Random":
+        random.shuffle(items)
     return jsonify({
         "items": items, "next_cursor": (payload.get("metadata") or {}).get("nextCursor"),
-        "includes_adult": include_adult, "catalog_query": {"sort": sort, "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
+        "family": family, "base_model": civitai_base_for_family(family),
+        "includes_adult": include_adult, "catalog_query": {"sort": sort, "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip()), "randomized": sort == "Random"},
     })
 
 

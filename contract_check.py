@@ -81,9 +81,22 @@ def main() -> None:
         raise AssertionError("O frontend deve atualizar e sincronizar o arquivo quando o MEGA conectar depois do bootstrap")
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
-    adaptive = server.validate_params({"prompt": "model profile test", "model": server.DEFAULT_MODEL_ID, "sampler": "euler_a"}, None)
-    assert_equal(adaptive.model_id, server.DEFAULT_MODEL_ID, "Perfil de modelo deve ser preservado na validação")
-    assert_equal(adaptive.sampler, "euler_a", "Sampler deve ser preservado na validação")
+    if server.family_profile(server.get_model_spec().get("family")).get("engine") == "anima" and not server.ANIMA_ENGINE:
+        try:
+            server.validate_params({"prompt": "model profile test", "model": server.DEFAULT_MODEL_ID, "sampler": "euler_a"}, None)
+        except ValueError as error:
+            if "engine Anima" not in str(error):
+                raise AssertionError("O bloqueio de Anima deve explicar como configurar o engine")
+        else:
+            raise AssertionError("O perfil Anima deve bloquear geração sem engine configurado")
+    original_anima_engine = server.ANIMA_ENGINE
+    try:
+        server.ANIMA_ENGINE = "diffusers"
+        adaptive = server.validate_params({"prompt": "model profile test", "model": server.DEFAULT_MODEL_ID, "sampler": "euler_a"}, None)
+        assert_equal(adaptive.model_id, server.DEFAULT_MODEL_ID, "Perfil de modelo deve ser preservado na validação")
+        assert_equal(adaptive.sampler, "euler_a", "Sampler deve ser preservado na validação")
+    finally:
+        server.ANIMA_ENGINE = original_anima_engine
     if "MODELS_CONFIG" not in server_source or "delete_job" not in server_source:
         raise AssertionError("O servidor deve expor perfis configuráveis e exclusão remota")
 
@@ -131,8 +144,8 @@ def main() -> None:
             return {"items": [{
                 "id": 42, "name": "Adapter", "creator": {"username": "artist"}, "tags": ["style"],
                 "modelVersions": [
-                    {"id": 73, "name": "IFL", "baseModel": "Illustrious", "images": [], "stats": {"downloadCount": 8}},
-                    {"id": 74, "name": "LMB v2", "baseModel": "Illustrious", "images": [], "stats": {"downloadCount": 5}},
+                    {"id": 73, "name": "IFL", "baseModel": "Anima", "images": [], "stats": {"downloadCount": 8}},
+                    {"id": 74, "name": "LMB v2", "baseModel": "Anima", "images": [], "stats": {"downloadCount": 5}},
                     {"id": 75, "name": "Outra base", "baseModel": "SDXL 1.0", "images": [], "stats": {"downloadCount": 99}},
                 ],
             }], "metadata": {"nextCursor": "next-page"}}
@@ -146,11 +159,11 @@ def main() -> None:
     finally:
         server.requests.get = original_get
     assert_equal(catalog.status_code, 200, "Catálogo deve responder")
-    assert_equal(called["params"]["baseModels"], "Illustrious", "Catálogo deve filtrar Illustrious")
+    assert_equal(called["params"]["baseModels"], "Anima", "Catálogo deve filtrar Anima por padrão")
     assert_equal(called["params"]["query"], "style adapter", "Catálogo deve encaminhar pesquisa por nome")
     catalog_json = catalog.get_json()
     assert_equal(catalog_json["items"][0]["version_id"], 73, "Versão padrão de LoRA deve ser exposta")
-    assert_equal([item["id"] for item in catalog_json["items"][0]["versions"]], [73, 74], "Todas as versões Illustrious devem ser expostas")
+    assert_equal([item["id"] for item in catalog_json["items"][0]["versions"]], [73, 74], "Todas as versões Anima devem ser expostas")
     assert_equal(catalog_json["items"][0]["versions"][1]["name"], "LMB v2", "Nome da versão deve ser preservado")
     assert_equal(catalog_json["next_cursor"], "next-page", "Cursor deve ser preservado")
     assert_equal(called["params"]["nsfw"], "false", "Catálogo padrão deve declarar nsfw=false")
