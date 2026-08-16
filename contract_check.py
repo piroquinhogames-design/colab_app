@@ -45,6 +45,8 @@ def main() -> None:
     requirements = (package_root / "requirements.txt").read_text(encoding="utf-8")
     if "peft==0.17.0" not in requirements:
         raise AssertionError("O pacote deve fixar a versão PEFT compatível com carregamento de LoRA")
+    if "pycryptodome==3.21.0" not in requirements:
+        raise AssertionError("O pacote deve instalar pycryptodome para o módulo Crypto exigido pelo MEGA")
     if any(line.strip().startswith("torch") for line in requirements.splitlines()):
         raise AssertionError("O pacote não deve atualizar o PyTorch/CUDA que já vem com o Colab")
     launcher_source = (package_root / "launch_colab.py").read_text(encoding="utf-8")
