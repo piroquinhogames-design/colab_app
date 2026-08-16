@@ -57,6 +57,8 @@ def main() -> None:
         raise AssertionError("O inicializador não deve falhar por conflitos globais do Colab")
     if '"-m", "venv"' in launcher_source or "VENV_PYTHON" in launcher_source:
         raise AssertionError("O inicializador não pode depender de venv, pois ensurepip falha no Colab")
+    if "SERVER_START_TIMEOUT" not in launcher_source or "time.monotonic()" not in launcher_source:
+        raise AssertionError("O inicializador deve tolerar inicialização lenta com timeout configurável")
     if '"--upgrade", "--no-deps"' not in launcher_source:
         raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
     if 'transformers_version != "4.48.3"' not in launcher_source:
@@ -66,6 +68,8 @@ def main() -> None:
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
+    if "archive-initializer" not in server_source or "archive_ready" not in server_source:
+        raise AssertionError("A conexão MEGA deve ocorrer sem bloquear a abertura do servidor")
     if "_prepare_lora_file" not in server_source or "_is_unsupported_lora_key" not in server_source:
         raise AssertionError("O servidor deve preparar LoRAs com metadados alpha incompatíveis")
     if not server.GeneratorEngine._is_unsupported_lora_key("lora_unet_label_emb_0_0.alpha"):

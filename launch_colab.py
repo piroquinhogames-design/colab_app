@@ -23,6 +23,7 @@ import requests
 
 APP_DIR = Path(__file__).resolve().parent
 PORT = os.environ.get("PORT", "7860")
+SERVER_START_TIMEOUT = float(os.environ.get("SERVER_START_TIMEOUT", "180"))
 TUNNEL_PATTERN = re.compile(r"https://[-a-z0-9]+\.(?:ngrok-free\.app|ngrok\.io)", re.I)
 
 
@@ -117,15 +118,23 @@ def pipe_output(process: subprocess.Popen[str], label: str, on_line=None) -> Non
 
 
 def wait_for_server(process: subprocess.Popen[str]) -> None:
-    for _ in range(50):
+    deadline = time.monotonic() + SERVER_START_TIMEOUT
+    last_error = "a porta ainda não aceitou conexões"
+    while time.monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError("O servidor encerrou antes de responder. Leia as linhas [server] acima.")
         try:
-            if requests.get(f"http://127.0.0.1:{PORT}/api/health", timeout=1.5).ok:
+            response = requests.get(f"http://127.0.0.1:{PORT}/api/health", timeout=1.5)
+            if response.ok:
                 return
-        except requests.RequestException:
-            time.sleep(.5)
-    raise RuntimeError("O servidor não respondeu a tempo.")
+            last_error = f"health HTTP {response.status_code}"
+        except requests.RequestException as exc:
+            last_error = str(exc)[:160]
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"O servidor não respondeu em {SERVER_START_TIMEOUT:g}s ({last_error}). "
+        "A inicialização do modelo/MEGA pode continuar; verifique as linhas [server] acima."
+    )
 
 
 def main() -> None:
@@ -142,7 +151,7 @@ def main() -> None:
     validate_runtime()
     ngrok = ensure_ngrok()
     configure_ngrok(ngrok)
-    print("[setup] Iniciando Illustrious LoRA Studio na GPU atual…")
+    print(f"[setup] Iniciando Illustrious LoRA Studio na GPU atual (aguardando até {SERVER_START_TIMEOUT:g}s)…")
     server = subprocess.Popen(
         [sys.executable, "server.py"], cwd=APP_DIR, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy(),

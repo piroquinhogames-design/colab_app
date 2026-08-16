@@ -647,10 +647,28 @@ class JobManager:
 
 
 archive = MegaArchive()
-archive.connect()
 engine = GeneratorEngine()
 manager = JobManager(archive, engine)
-manager.restore()
+archive_ready = threading.Event()
+archive_restore_lock = threading.Lock()
+
+
+def restore_archive() -> None:
+    """Serializa restaurações para não competir com a preparação inicial do arquivo."""
+    with archive_restore_lock:
+        manager.restore()
+
+
+def initialize_archive() -> None:
+    """Prepara o MEGA em segundo plano para não bloquear a abertura do servidor."""
+    try:
+        archive.connect()
+        restore_archive()
+    finally:
+        archive_ready.set()
+
+
+threading.Thread(target=initialize_archive, name="archive-initializer", daemon=True).start()
 
 
 def validate_params(raw: dict[str, Any], source_image: str | None) -> GenerationParams:
@@ -726,7 +744,8 @@ def logout():
 @authentication_required
 def bootstrap():
     # Restaura manifestos também quando a sessão MEGA já está autenticada.
-    manager.restore()
+    if archive_ready.is_set():
+        restore_archive()
     last_settings = archive.load_last_settings()
     return jsonify({
         "csrf": session.get("csrf"), "jobs": manager.public_jobs(),
@@ -830,7 +849,7 @@ def get_job(job_id: str):
 @authentication_required
 def history():
     if request.args.get("sync") == "1":
-        manager.restore()
+        restore_archive()
     return jsonify({"items": manager.public_jobs()})
 
 
@@ -843,7 +862,7 @@ def history_sync():
     pending, synced = manager.sync_pending()
     last_settings_synced = archive.sync_last_settings()
     before = len(manager.jobs)
-    manager.restore()
+    restore_archive()
     return jsonify({
         "items": manager.public_jobs(),
         "restored": max(0, len(manager.jobs) - before),
@@ -870,7 +889,10 @@ def history_image(job_id: str):
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "queue": manager.pending.qsize(), "archive": archive.available})
+    return jsonify({
+        "status": "ok", "ready": archive_ready.is_set(),
+        "queue": manager.pending.qsize(), "archive": archive.available,
+    })
 
 
 @app.errorhandler(413)
