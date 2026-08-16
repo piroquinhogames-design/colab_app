@@ -132,35 +132,55 @@ def main() -> None:
     threading.Thread(target=pipe_output, args=(server, "server"), daemon=True).start()
     wait_for_server(server)
 
-    public_url: list[str] = []
-    def capture_url(line: str) -> None:
-        match = TUNNEL_PATTERN.search(line)
-        if match and not public_url:
-            public_url.append(match.group(0))
-            print("\n" + "=" * 72)
-            print(f"PAINEL PUBLICADO: {public_url[0]}")
-            print("Use a senha definida nesta célula. Pare a célula para encerrar o nó.")
-            print("=" * 72 + "\n")
+    current_url = APP_DIR / "current_tunnel_url.txt"
+    tunnel: subprocess.Popen[str] | None = None
+    shutdown_requested = False
 
-    tunnel = subprocess.Popen(
-        [cloudflared, "tunnel", "--url", f"http://127.0.0.1:{PORT}"], text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-    )
-    threading.Thread(target=pipe_output, args=(tunnel, "tunnel", capture_url), daemon=True).start()
+    def start_tunnel() -> subprocess.Popen[str]:
+        nonlocal tunnel
+        current_url.unlink(missing_ok=True)
+        public_url: list[str] = []
+
+        def capture_url(line: str) -> None:
+            match = TUNNEL_PATTERN.search(line)
+            if match and not public_url:
+                public_url.append(match.group(0))
+                current_url.write_text(public_url[0] + "\n", encoding="utf-8")
+                print("\n" + "=" * 72)
+                print(f"URL ATUAL DO PAINEL: {public_url[0]}")
+                print("Abra exatamente esta URL; ela muda quando o túnel é recriado.")
+                print("Use a senha definida nesta célula. Pare a célula para encerrar o nó.")
+                print("=" * 72 + "\n")
+
+        tunnel = subprocess.Popen(
+            [cloudflared, "tunnel", "--url", f"http://127.0.0.1:{PORT}"], text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        threading.Thread(target=pipe_output, args=(tunnel, "tunnel", capture_url), daemon=True).start()
+        return tunnel
+
     try:
-        while server.poll() is None and tunnel.poll() is None:
+        tunnel = start_tunnel()
+        while server.poll() is None:
+            if tunnel.poll() is not None:
+                print("[tunnel] O endereço anterior expirou; criando um novo Quick Tunnel…")
+                time.sleep(2)
+                tunnel = start_tunnel()
             time.sleep(1)
     except KeyboardInterrupt:
+        shutdown_requested = True
         print("\n[shutdown] Encerrando túnel e servidor…")
     finally:
         for process in (tunnel, server):
-            if process.poll() is None:
+            if process is not None and process.poll() is None:
                 process.terminate()
+        current_url.unlink(missing_ok=True)
         for process in (tunnel, server):
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
+            if process is not None:
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
 
 
 if __name__ == "__main__":
