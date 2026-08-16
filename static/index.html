@@ -18,6 +18,7 @@
         <span class="glitch mini-glitch" data-text="ILLUSTRIOUS">ILLUSTRIOUS</span>
         <small>LoRA Studio</small>
       </a>
+      <nav class="top-nav" aria-label="Navegação principal"><button id="open-prompt-store-top" class="top-nav-button" type="button">✦ LOJA DE PROMPTS</button></nav>
       <div class="node-status" id="node-status">
         <i></i><span>NODE // VERIFICANDO</span>
       </div>
@@ -61,6 +62,17 @@
             <p id="upload-name">NENHUM ARQUIVO NO BUFFER</p>
           </div>
 
+          <div id="edit-control" class="edit-control hidden">
+            <div class="edit-control-heading"><span class="field-label">INTENSIDADE DE EDIÇÃO</span><span class="edit-readout">IMG→IMG // <strong id="edit-level-readout">MÉDIO</strong></span></div>
+            <input id="edit-level" type="hidden" value="medium" />
+            <div class="edit-levels" role="group" aria-label="Intensidade de edição">
+              <button type="button" class="edit-level active" data-edit-level="low"><strong>BAIXO</strong><small>Pequenos ajustes, identidade preservada.</small></button>
+              <button type="button" class="edit-level" data-edit-level="medium"><strong>MÉDIO</strong><small>Troca de fundo e elementos da cena.</small></button>
+              <button type="button" class="edit-level" data-edit-level="high"><strong>ALTO</strong><small>Reimagina pose, roupa e composição.</small></button>
+            </div>
+            <p class="edit-hint">O nível define o ponto de partida da força img2img. Use a barra abaixo para um ajuste fino.</p>
+          </div>
+
           <div class="section-divider"><span>PARÂMETROS DE CONSOLE</span></div>
           <div class="controls-grid">
             <label class="control"><span>SEED</span><input id="seed" type="number" min="-1" max="4294967295" value="-1" /><small>-1 = aleatória</small></label>
@@ -68,7 +80,7 @@
             <label class="control"><span>GUIDANCE <output id="guidance-value">6.5</output></span><input id="guidance" type="range" min="1" max="15" step="0.5" value="6.5" /></label>
             <label class="control"><span>WIDTH</span><select id="width"><option>512</option><option>576</option><option>640</option><option>704</option><option>768</option><option>832</option><option>896</option><option>960</option><option selected>1024</option></select></label>
             <label class="control"><span>HEIGHT</span><select id="height"><option>512</option><option>576</option><option>640</option><option>704</option><option>768</option><option>832</option><option>896</option><option>960</option><option selected>1024</option></select></label>
-            <label class="control strength-control"><span>STRENGTH <output id="strength-value">0.65</output></span><input id="strength" type="range" min="0.05" max="1" step="0.05" value="0.65" /></label>
+            <label class="control strength-control"><span>FORÇA / DENOISE <output id="strength-value">0.65</output></span><input id="strength" type="range" min="0.05" max="1" step="0.05" value="0.65" /></label>
           </div>
 
           <div class="section-divider lora-divider"><span>RACK DE ADAPTADORES</span><button id="open-catalog" type="button" class="text-button">+ EXPLORAR LoRAs</button></div>
@@ -91,7 +103,7 @@
       </section>
 
       <section class="history-section">
-        <div class="history-heading"><div><p class="eyebrow">[ PERSISTENT OUTPUT ARCHIVE ]</p><h2>MEMÓRIA DE IMAGENS</h2></div><button id="refresh-history" class="subtle-button" type="button">↻ SINCRONIZAR</button></div>
+        <div class="history-heading"><div><p class="eyebrow">[ PERSISTENT OUTPUT ARCHIVE ]</p><h2>MEMÓRIA DE IMAGENS</h2></div><div class="history-actions"><button id="open-prompt-store" class="subtle-button" type="button">✦ LOJA DE PROMPTS</button><button id="refresh-history" class="subtle-button" type="button">↻ SINCRONIZAR</button></div></div>
         <div id="history-grid" class="history-grid"><div class="empty-history"><span>///</span><p>O arquivo ainda não contém sinais gerados.</p></div></div>
       </section>
     </main>
@@ -101,6 +113,24 @@
       <div class="catalog-filters"><input id="catalog-query" type="search" placeholder="BUSCAR NOME OU ESTILO" /><input id="catalog-tag" type="text" placeholder="TAG OPCIONAL" /><select id="catalog-sort"><option value="Most Downloaded">MAIS BAIXADOS</option><option value="Highest Rated">MELHOR AVALIADOS</option><option value="Newest">MAIS NOVOS</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="catalog-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="search-catalog" class="signal-button small" type="button">CONSULTAR</button></div>
       <div id="catalog-grid" class="catalog-grid"><p class="catalog-empty">Abra o catálogo para localizar LoRAs compatíveis.</p></div>
       <div class="catalog-footer"><span id="catalog-note">O catálogo consulta exclusivamente LoRAs com base Illustrious.</span><button id="next-catalog" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
+    </dialog>
+
+    <dialog id="prompt-store-dialog" class="prompt-store-dialog">
+      <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / PROMPT MARKET ]</p><h2>LOJA DE PROMPTS</h2><p class="store-lead">Descubra imagens com metadados disponíveis e remixe prompt, seed, LoRAs e composição em uma segunda versão.</p></div><button id="close-prompt-store" type="button" class="close-button" aria-label="Fechar Loja de Prompts">×</button></div>
+      <div class="prompt-store-filters">
+        <div class="prompt-store-search"><input id="prompt-store-query" type="search" placeholder="BUSCAR PROMPT, ESTILO OU AUTOR" /><button id="search-prompt-store" class="signal-button small" type="button">CONSULTAR</button></div>
+        <div class="prompt-store-options"><select id="prompt-store-sort" aria-label="Ordenar Loja de Prompts"><option value="Most Reactions">RELEVÂNCIA</option><option value="Random">ALEATÓRIO</option><option value="Newest">MAIS RECENTES</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="prompt-store-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="random-prompt-store" class="subtle-button" type="button">↝ SORTEAR</button></div>
+        <div class="prompt-filter-bank" role="group" aria-label="Filtros combináveis">
+          <span>FILTRAR POR</span><button type="button" class="prompt-filter-chip" data-prompt-filter="pose">POSES</button><button type="button" class="prompt-filter-chip" data-prompt-filter="portrait">RETRATO</button><button type="button" class="prompt-filter-chip" data-prompt-filter="cinematic">CINEMÁTICO</button><button type="button" class="prompt-filter-chip" data-prompt-filter="anime">ANIME</button><button type="button" class="prompt-filter-chip" data-prompt-filter="fashion">MODA</button><button type="button" class="prompt-filter-chip" data-prompt-filter="landscape">PAISAGEM</button>
+        </div>
+      </div>
+      <div id="prompt-store-grid" class="prompt-store-grid"><p class="catalog-empty">Abra a loja para consultar imagens com prompt disponível.</p></div>
+      <div class="catalog-footer"><span id="prompt-store-note">Filtros combináveis procuram termos nos metadados públicos do Civitai.</span><button id="next-prompt-store" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
+    </dialog>
+
+    <dialog id="image-dialog" class="image-dialog">
+      <div class="image-dialog-top"><div><p class="eyebrow">[ OUTPUT SIGNAL / FULLSCREEN VIEW ]</p><h2 id="image-dialog-title">IMAGEM EM DESTAQUE</h2></div><button id="close-image-dialog" class="close-button" type="button" aria-label="Fechar tela cheia">×</button></div>
+      <div class="image-dialog-body"><img id="image-dialog-preview" alt="Pré-visualização ampliada" /><div class="image-dialog-info"><p id="image-dialog-prompt"></p><div id="image-dialog-meta"></div><button id="image-dialog-remix" class="signal-button" type="button">⟳ REMIXAR ESTA IMAGEM</button></div></div>
     </dialog>
     <div id="toast" class="toast" role="status"></div>
     <script type="module" src="/static/app.js"></script>

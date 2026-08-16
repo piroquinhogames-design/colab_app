@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import io
 import functools
 import hmac
 import json
@@ -21,6 +22,7 @@ import time
 import types
 import uuid
 from dataclasses import dataclass, field, asdict
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -134,6 +136,7 @@ class GenerationParams:
     mode: str
     loras: list[LoRASelection] = field(default_factory=list)
     source_image: str | None = None
+    edit_level: str = "medium"
 
 
 def saved_settings(params: GenerationParams) -> dict[str, Any]:
@@ -148,6 +151,7 @@ def saved_settings(params: GenerationParams) -> dict[str, Any]:
         "height": params.height,
         "strength": params.strength,
         "mode": params.mode,
+        "edit_level": params.edit_level,
         "loras": [asdict(item) for item in params.loras],
     }
 
@@ -582,6 +586,7 @@ class JobManager:
                         prompt=params["prompt"], negative_prompt=params.get("negative_prompt", ""), seed=params["seed"],
                         steps=params["steps"], guidance=params["guidance"], width=params["width"], height=params["height"],
                         strength=params.get("strength", 0.65), mode=params["mode"], loras=loras,
+                        edit_level=params.get("edit_level", "medium"),
                     ), updated_at=data.get("updated_at"), completed_at=data.get("completed_at"),
                     filename=data.get("filename") or f"{data['id']}.png", mega_synced=True, error=data.get("error"), vram_gb=data.get("vram_gb"),
                 )
@@ -675,6 +680,9 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     mode = raw.get("mode", "text2img")
     if mode not in {"text2img", "img2img"}:
         raise ValueError("Modo de geração inválido.")
+    edit_level = str(raw.get("edit_level", "medium")).strip().lower()
+    if edit_level not in {"low", "medium", "high"}:
+        raise ValueError("Nível de edição inválido. Use baixo, médio ou alto.")
     prompt = str(raw.get("prompt", "")).strip()
     if not prompt or len(prompt) > 4000:
         raise ValueError("Informe um prompt entre 1 e 4000 caracteres.")
@@ -709,7 +717,7 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     return GenerationParams(
         prompt=prompt, negative_prompt=str(raw.get("negative_prompt", ""))[:4000], seed=seed,
         steps=steps, guidance=guidance, width=width, height=height, strength=strength,
-        mode=mode, loras=parsed_loras, source_image=source_image,
+        mode=mode, loras=parsed_loras, source_image=source_image, edit_level=edit_level,
     )
 
 
@@ -808,6 +816,99 @@ def catalog():
         "items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"),
         "includes_adult": include_adult, "catalog_query": {"nsfw": params["nsfw"], "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
     })
+
+
+@app.route("/api/prompt-store")
+@authentication_required
+def prompt_store():
+    include_adult = request.args.get("include_adult", "").strip().lower() in {"1", "true", "yes"}
+    if include_adult and not os.environ.get("CIVITAI_TOKEN", "").strip():
+        return jsonify({"error": "Defina CIVITAI_TOKEN no servidor para consultar conteúdo adulto autorizado."}), 400
+    sort = request.args.get("sort", "Most Reactions")
+    if sort not in {"Most Reactions", "Random", "Newest"}:
+        sort = "Most Reactions"
+    try:
+        limit = min(max(int(request.args.get("limit", 24)), 1), 48)
+    except (TypeError, ValueError):
+        limit = 24
+    params: dict[str, Any] = {
+        "limit": limit,
+        "sort": sort,
+        "period": request.args.get("period", "AllTime"),
+        "type": "image",
+        "withMeta": "true",
+        "nsfw": "true" if include_adult else "false",
+    }
+    if request.args.get("cursor"):
+        params["cursor"] = request.args["cursor"]
+    try:
+        response = requests.get(f"{CIVITAI_BASE}/images", params=params, headers=civitai_headers(), timeout=25)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        return jsonify({"error": f"Não foi possível consultar a Loja de Prompts no Civitai: {str(exc)[:160]}"}), 502
+
+    search = request.args.get("query", "").strip().lower()[:120]
+    filters = [term.strip().lower() for term in request.args.get("filters", "").split(",") if term.strip()][:8]
+    items: list[dict[str, Any]] = []
+    for image in payload.get("items", []):
+        meta = image.get("meta") or {}
+        prompt = str(meta.get("prompt") or meta.get("Prompt") or "").strip()
+        negative_prompt = str(meta.get("negativePrompt") or meta.get("Negative prompt") or "").strip()
+        resources = meta.get("civitaiResources") or []
+        loras: list[dict[str, Any]] = []
+        for resource in resources:
+            if str(resource.get("type", "")).lower() != "lora":
+                continue
+            try:
+                version_id = int(resource.get("modelVersionId") or resource.get("versionId"))
+            except (TypeError, ValueError):
+                continue
+            loras.append({
+                "version_id": version_id,
+                "model_id": None,
+                "name": f"LoRA // {version_id}",
+                "weight": float(resource.get("weight", 0.8) or 0.8),
+            })
+        tags = [str(tag) for tag in (image.get("tags") or [])]
+        haystack = " ".join([prompt, negative_prompt, str(image.get("username", "")), " ".join(tags)]).lower()
+        if search and search not in haystack:
+            continue
+        if filters and not all(term in haystack for term in filters):
+            continue
+        items.append({
+            "id": image.get("id"), "image": image.get("url"), "prompt": prompt,
+            "negative_prompt": negative_prompt, "seed": meta.get("seed"),
+            "steps": meta.get("steps"), "guidance": meta.get("cfgScale") or meta.get("guidanceScale"),
+            "width": image.get("width") or (str(meta.get("Size", "")).split("x")[0] if "x" in str(meta.get("Size", "")) else None),
+            "height": image.get("height") or (str(meta.get("Size", "")).split("x")[-1] if "x" in str(meta.get("Size", "")) else None),
+            "username": image.get("username"), "created_at": image.get("createdAt"),
+            "nsfw": bool(image.get("nsfw")), "nsfw_level": image.get("nsfwLevel"),
+            "tags": tags[:12], "loras": loras[:MAX_LORAS],
+            "reactions": (image.get("stats") or {}).get("heartCount", 0),
+        })
+    return jsonify({
+        "items": items, "next_cursor": (payload.get("metadata") or {}).get("nextCursor"),
+        "includes_adult": include_adult, "catalog_query": {"sort": sort, "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
+    })
+
+
+@app.route("/api/prompt-store/image")
+@authentication_required
+def prompt_store_image():
+    target = request.args.get("url", "").strip()
+    parsed = urlparse(target)
+    if parsed.scheme != "https" or parsed.hostname not in {"image.civitai.com", "images.civitai.com", "civitai.com"}:
+        return jsonify({"error": "Origem de imagem não autorizada."}), 400
+    try:
+        response = requests.get(target, headers=civitai_headers(), timeout=25)
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "image/jpeg").split(";")[0]
+        if not content_type.startswith("image/") or len(response.content) > MAX_UPLOAD_BYTES:
+            return jsonify({"error": "A imagem do Civitai não é válida para remix."}), 400
+        return send_file(io.BytesIO(response.content), mimetype=content_type, download_name="civitai-remix.jpg")
+    except requests.RequestException as exc:
+        return jsonify({"error": f"Não foi possível baixar a imagem para remix: {str(exc)[:160]}"}), 502
 
 
 @app.route("/api/jobs", methods=["POST"])

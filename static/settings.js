@@ -1,5 +1,5 @@
 export function restoreLastSettings(settings, dependencies) {
-  const { query, state, renderSelectedLoras, setMode, log } = dependencies;
+  const { query, state, renderSelectedLoras, setMode, setEditLevel, log } = dependencies;
   if (!settings || typeof settings !== 'object') return false;
 
   const fieldIds = {
@@ -11,6 +11,7 @@ export function restoreLastSettings(settings, dependencies) {
     width: 'width',
     height: 'height',
     strength: 'strength',
+    edit_level: 'edit-level',
   };
   Object.entries(fieldIds).forEach(([settingKey, elementId]) => {
     const field = query(`#${elementId}`);
@@ -25,6 +26,7 @@ export function restoreLastSettings(settings, dependencies) {
     .slice(0, 3).map((item) => ({ ...item, weight: Number(item.weight ?? .8) })) : [];
   renderSelectedLoras();
   setMode(settings.mode === 'img2img' ? 'img2img' : 'text2img');
+  if (typeof setEditLevel === 'function') setEditLevel(settings.edit_level || 'medium', {silent: true});
   log('Último prompt e parâmetros restaurados do arquivo MEGA.');
   return true;
 }

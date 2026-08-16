@@ -3,17 +3,29 @@ import { restoreLastSettings as applyLastSettings } from '/static/settings.js';
 const state = {
   csrf: null,
   mode: 'text2img',
+  editLevel: 'medium',
   selectedLoras: [],
   catalogCursor: null,
+  promptStoreCursor: null,
+  promptStoreItems: [],
+  promptFilters: new Set(),
   activeJobId: null,
   pollTimer: null,
   toastTimer: null,
   archiveTimer: null,
   archiveReady: false,
+  historyItems: [],
+  previewJobId: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+const EDIT_LEVELS = {
+  low: {label: 'BAIXO', strength: 0.25},
+  medium: {label: 'MÉDIO', strength: 0.55},
+  high: {label: 'ALTO', strength: 0.85},
+};
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
@@ -70,8 +82,24 @@ function setMode(mode) {
   state.mode = mode;
   $$('.mode').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
   $('#upload-zone').classList.toggle('hidden', mode !== 'img2img');
+  $('#edit-control').classList.toggle('hidden', mode !== 'img2img');
   $('.strength-control').classList.toggle('hidden', mode !== 'img2img');
   log(mode === 'img2img' ? 'Modo IMG→IMG selecionado; injete a imagem-base.' : 'Modo TXT→IMG selecionado.');
+}
+
+function setEditLevel(level, {silent = false} = {}) {
+  const selected = EDIT_LEVELS[level] ? level : 'medium';
+  const preset = EDIT_LEVELS[selected];
+  state.editLevel = selected;
+  const hidden = $('#edit-level');
+  if (hidden) hidden.value = selected;
+  $$('.edit-level').forEach((button) => button.classList.toggle('active', button.dataset.editLevel === selected));
+  const readout = $('#edit-level-readout');
+  if (readout) readout.textContent = preset.label;
+  if (!silent && $('#strength')) {
+    $('#strength').value = preset.strength;
+    $('#strength-value').value = preset.strength;
+  }
 }
 
 function wireParameterReadouts() {
@@ -208,15 +236,92 @@ async function loadCatalog({append = false} = {}) {
   } finally { button.disabled = false; }
 }
 
+function promptStoreCard(item, index) {
+  const prompt = item.prompt || 'Prompt não informado pelo autor.';
+  const tags = (item.tags || []).slice(0, 5).join(' // ') || 'sem tags públicas';
+  const size = item.width && item.height ? `${item.width}×${item.height}` : 'DIMENSÃO --';
+  const loraCount = (item.loras || []).length;
+  return `<article class="prompt-card${item.prompt ? '' : ' no-meta'}">
+    <div class="prompt-card-preview"><img loading="lazy" src="${escapeHtml(item.image || '')}" alt="Preview de prompt por ${escapeHtml(item.username || 'autor desconhecido')}" referrerpolicy="no-referrer" />${item.nsfw ? '<span class="prompt-card-badge">+18</span>' : ''}</div>
+    <div class="prompt-card-body"><p class="prompt-card-prompt" title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="prompt-card-meta"><span>${escapeHtml(item.username || 'AUTOR --')}</span><span>${escapeHtml(size)}</span></div><div class="prompt-card-tags" title="${escapeHtml(tags)}">${escapeHtml(tags)}</div><button type="button" data-prompt-remix="${index}" ${item.prompt ? '' : 'disabled'}>⟳ REMIXAR PROMPT${loraCount ? ` // ${loraCount} LoRA` : ''}</button></div>
+  </article>`;
+}
+
+function renderPromptStore(items, {append = false} = {}) {
+  const grid = $('#prompt-store-grid');
+  if (append) state.promptStoreItems = [...state.promptStoreItems, ...items];
+  else state.promptStoreItems = items;
+  if (!state.promptStoreItems.length) {
+    grid.innerHTML = '<p class="catalog-empty">Nenhuma imagem com prompt corresponde aos filtros atuais.</p>';
+    return;
+  }
+  grid.innerHTML = state.promptStoreItems.map(promptStoreCard).join('');
+  bindPromptStoreActions();
+}
+
+function bindPromptStoreActions() {
+  $$('[data-prompt-remix]').forEach((button) => button.addEventListener('click', () => remixPromptStoreItem(Number(button.dataset.promptRemix))));
+}
+
+async function remixPromptStoreItem(index) {
+  const item = state.promptStoreItems[index];
+  if (!item?.prompt) return;
+  try {
+    const response = await fetch(`/api/prompt-store/image?url=${encodeURIComponent(item.image)}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || 'Não foi possível preparar a imagem da Loja de Prompts.');
+    }
+    const blob = await response.blob();
+    const file = new File([blob], `prompt-store-${item.id || Date.now()}.jpg`, {type: blob.type || 'image/jpeg'});
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    $('#source-image').files = transfer.files;
+    $('#upload-name').textContent = `PROMPT STORE // ${file.name}`;
+    const sizes = [512, 576, 640, 704, 768, 832, 896, 960, 1024];
+    const width = sizes.includes(Number(item.width)) ? Number(item.width) : 1024;
+    const height = sizes.includes(Number(item.height)) ? Number(item.height) : 1024;
+    restoreLastSettings({prompt: item.prompt, negative_prompt: item.negative_prompt || '', seed: -1, steps: Number(item.steps) || 28, guidance: Number(item.guidance) || 6.5, width, height, strength: .55, mode: 'img2img', edit_level: 'medium', loras: item.loras || []});
+    setMode('img2img');
+    $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
+    $('#prompt-store-dialog').close();
+    toast('Prompt, imagem de referência e recursos disponíveis carregados para remix.');
+    log(`Remix da Loja de Prompts ${String(item.id || '').slice(0, 10)} preparado.`);
+  } catch (error) { toast(error.message, true); }
+}
+
+async function loadPromptStore({append = false, random = false} = {}) {
+  const button = $('#search-prompt-store');
+  button.disabled = true;
+  if (random) $('#prompt-store-sort').value = 'Random';
+  const params = new URLSearchParams({
+    query: $('#prompt-store-query').value.trim(), sort: $('#prompt-store-sort').value,
+    limit: '24', include_adult: $('#prompt-store-adult').checked ? 'true' : 'false',
+    filters: [...state.promptFilters].join(','),
+  });
+  if (append && state.promptStoreCursor) params.set('cursor', state.promptStoreCursor);
+  try {
+    const payload = await api(`/api/prompt-store?${params}`);
+    state.promptStoreCursor = payload.next_cursor || null;
+    renderPromptStore(payload.items || [], {append});
+    $('#next-prompt-store').disabled = !state.promptStoreCursor;
+    const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
+    $('#prompt-store-note').textContent = `${(payload.items || []).length} prompts encontrados // ${$('#prompt-store-sort').value === 'Random' ? 'ordem aleatória' : 'ordem por relevância'} // ${state.promptFilters.size ? `filtros: ${[...state.promptFilters].join(' + ')} // ` : ''}${payload.includes_adult ? '+18 INCLUÍDO' : 'MODO PADRÃO'} // ${authState}`;
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+}
+
 function imageCard(job) {
   const prompt = job.params?.prompt || '';
   const loras = (job.params?.loras || []).map((item) => item.name).join(', ') || 'checkpoint puro';
   const mode = job.params?.mode === 'img2img' ? 'IMG→IMG' : 'TXT→IMG';
-  const strength = job.params?.mode === 'img2img' ? ` // STR ${job.params?.strength ?? '--'}` : '';
-  const settings = `${mode} // ${job.params?.width ?? '--'}×${job.params?.height ?? '--'} // ${job.params?.steps ?? '--'} STEPS // CFG ${job.params?.guidance ?? '--'}${strength}`;
-  return `<article class="history-card">
-    <img loading="lazy" src="/api/history/${encodeURIComponent(job.id)}/image" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
-    <div class="history-overlay"><p title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><a class="download-link" href="/api/history/${encodeURIComponent(job.id)}/image?download=1">↓ PNG</a></div>
+  const editLevel = job.params?.mode === 'img2img' ? ` // ${({'low': 'BAIXO', 'medium': 'MÉDIO', 'high': 'ALTO'})[job.params?.edit_level] || 'MÉDIO'}` : '';
+  const strength = job.params?.mode === 'img2img' ? ` // DENOISE ${job.params?.strength ?? '--'}` : '';
+  const settings = `${mode}${editLevel} // ${job.params?.width ?? '--'}×${job.params?.height ?? '--'} // ${job.params?.steps ?? '--'} STEPS // CFG ${job.params?.guidance ?? '--'}${strength}`;
+  const jobId = encodeURIComponent(job.id);
+  return `<article class="history-card" data-history-id="${jobId}">
+    <img loading="lazy" data-fullscreen="${jobId}" src="/api/history/${jobId}/image" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
+    <div class="history-overlay"><p title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="history-actions-row"><button class="history-icon-button" data-fullscreen="${jobId}" type="button" title="Tela cheia" aria-label="Abrir imagem em tela cheia">⛶</button><button class="history-icon-button remix" data-remix-history="${jobId}" type="button" title="Remixar materiais" aria-label="Remixar esta imagem">⟳</button><a class="download-link" href="/api/history/${jobId}/image?download=1" title="Baixar PNG">↓</a></div></div>
     <div class="history-meta"><strong>SEED ${escapeHtml(job.params?.seed)}</strong><span>${escapeHtml(settings)}</span><span>${escapeHtml(loras)} // ${escapeHtml(formatDate(job.completed_at || job.created_at))}</span></div>
   </article>`;
 }
@@ -224,7 +329,58 @@ function imageCard(job) {
 function renderHistory(items) {
   const grid = $('#history-grid');
   const complete = items.filter((item) => item.status === 'completed' && (item.filename || item.id));
+  state.historyItems = complete;
   grid.innerHTML = complete.length ? complete.map(imageCard).join('') : '<div class="empty-history"><span>///</span><p>O arquivo ainda não contém sinais gerados.</p></div>';
+  bindHistoryActions();
+}
+
+function historyJob(jobId) {
+  return state.historyItems.find((item) => String(item.id) === String(jobId));
+}
+
+function openImagePreview(jobId) {
+  const job = historyJob(jobId);
+  if (!job) return;
+  state.previewJobId = job.id;
+  const prompt = job.params?.prompt || 'Prompt não disponível.';
+  const loras = (job.params?.loras || []).map((item) => `${item.name} (${Number(item.weight ?? .8).toFixed(2)})`).join(', ') || 'checkpoint puro';
+  const level = ({low: 'BAIXO', medium: 'MÉDIO', high: 'ALTO'})[job.params?.edit_level] || 'MÉDIO';
+  $('#image-dialog-title').textContent = `SEED ${job.params?.seed ?? '--'} // ${level}`;
+  $('#image-dialog-preview').src = `/api/history/${encodeURIComponent(job.id)}/image`;
+  $('#image-dialog-preview').alt = `Imagem gerada a partir do prompt ${prompt}`;
+  $('#image-dialog-prompt').textContent = prompt;
+  $('#image-dialog-meta').innerHTML = `${escapeHtml(job.params?.mode === 'img2img' ? 'IMG→IMG' : 'TXT→IMG')} // ${escapeHtml(job.params?.width)}×${escapeHtml(job.params?.height)} // ${escapeHtml(job.params?.steps)} STEPS // CFG ${escapeHtml(job.params?.guidance)}<br />${escapeHtml(loras)}<br />${escapeHtml(formatDate(job.completed_at || job.created_at))}`;
+  $('#image-dialog').showModal();
+}
+
+async function remixHistoryJob(jobId) {
+  const job = historyJob(jobId);
+  if (!job) return;
+  try {
+    const response = await fetch(`/api/history/${encodeURIComponent(job.id)}/image`);
+    if (!response.ok) throw new Error('A imagem arquivada não está disponível para remix.');
+    const blob = await response.blob();
+    const file = new File([blob], `remix-${job.id}.png`, {type: blob.type || 'image/png'});
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    const source = $('#source-image');
+    source.files = transfer.files;
+    $('#upload-name').textContent = `REMIX // ${file.name}`;
+    restoreLastSettings({...job.params, mode: 'img2img', seed: -1, edit_level: job.params?.edit_level || 'medium'});
+    setMode('img2img');
+    $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
+    if ($('#image-dialog').open) $('#image-dialog').close();
+    toast('Materiais carregados: prompt, LoRAs, parâmetros e imagem-base. Seed definida como aleatória.');
+    log(`Remix preparado a partir do job ${String(job.id).slice(0, 8)}.`);
+  } catch (error) { toast(error.message, true); }
+}
+
+function bindHistoryActions() {
+  $$('[data-fullscreen]').forEach((element) => element.addEventListener('click', (event) => {
+    event.preventDefault();
+    openImagePreview(decodeURIComponent(element.dataset.fullscreen));
+  }));
+  $$('[data-remix-history]').forEach((button) => button.addEventListener('click', () => remixHistoryJob(decodeURIComponent(button.dataset.remixHistory))));
 }
 
 function setArchiveState(archive) {
@@ -315,7 +471,7 @@ async function submitJob(event) {
     prompt: $('#prompt').value, negative_prompt: $('#negative-prompt').value,
     mode: state.mode, seed: Number($('#seed').value), steps: Number($('#steps').value),
     guidance: Number($('#guidance').value), width: Number($('#width').value), height: Number($('#height').value),
-    strength: Number($('#strength').value), loras: state.selectedLoras,
+    strength: Number($('#strength').value), edit_level: state.editLevel, loras: state.selectedLoras,
   };
   const data = new FormData();
   data.append('payload', JSON.stringify(payload));
@@ -363,11 +519,12 @@ async function bootstrap() {
 }
 
 function restoreLastSettings(settings) {
-  return applyLastSettings(settings, { query: $, state, renderSelectedLoras, setMode, log });
+  return applyLastSettings(settings, { query: $, state, renderSelectedLoras, setMode, setEditLevel, log });
 }
 
 function bindEvents() {
   $$('.mode').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
+  $$('.edit-level').forEach((button) => button.addEventListener('click', () => setEditLevel(button.dataset.editLevel)));
   $$('.tag-bank button').forEach((button) => button.addEventListener('click', () => appendTag(button.dataset.target, button.textContent)));
   $('#source-image').addEventListener('change', (event) => { $('#upload-name').textContent = event.target.files[0] ? event.target.files[0].name : 'NENHUM ARQUIVO NO BUFFER'; });
   $('#generation-form').addEventListener('submit', submitJob);
@@ -382,9 +539,29 @@ function bindEvents() {
   }));
   $('#catalog-adult').addEventListener('change', () => { state.catalogCursor = null; $('#next-catalog').disabled = true; });
   $('#next-catalog').addEventListener('click', () => loadCatalog({append: true}));
+  const openPromptStore = () => { state.promptStoreCursor = null; $('#prompt-store-dialog').showModal(); loadPromptStore(); };
+  $('#open-prompt-store').addEventListener('click', openPromptStore);
+  $('#open-prompt-store-top').addEventListener('click', openPromptStore);
+  $('#close-prompt-store').addEventListener('click', () => $('#prompt-store-dialog').close());
+  $('#search-prompt-store').addEventListener('click', () => { state.promptStoreCursor = null; loadPromptStore(); });
+  $('#prompt-store-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); state.promptStoreCursor = null; loadPromptStore(); } });
+  $('#prompt-store-sort').addEventListener('change', () => { state.promptStoreCursor = null; loadPromptStore(); });
+  $('#prompt-store-adult').addEventListener('change', () => { state.promptStoreCursor = null; loadPromptStore(); });
+  $('#random-prompt-store').addEventListener('click', () => { state.promptStoreCursor = null; loadPromptStore({random: true}); });
+  $$('.prompt-filter-chip').forEach((button) => button.addEventListener('click', () => {
+    const term = button.dataset.promptFilter;
+    if (state.promptFilters.has(term)) state.promptFilters.delete(term); else state.promptFilters.add(term);
+    button.classList.toggle('active', state.promptFilters.has(term));
+    state.promptStoreCursor = null;
+    loadPromptStore();
+  }));
+  $('#next-prompt-store').addEventListener('click', () => loadPromptStore({append: true}));
   $('#refresh-history').addEventListener('click', () => { refreshHistory({sync: true}); log('Solicitando sincronização do arquivo MEGA.'); });
+  $('#close-image-dialog').addEventListener('click', () => $('#image-dialog').close());
+  $('#image-dialog-remix').addEventListener('click', () => { if (state.previewJobId) remixHistoryJob(state.previewJobId); });
   $('#logout').addEventListener('click', async () => { try { await api('/api/logout', {method: 'POST'}); } finally { window.location.assign('/'); } });
   wireParameterReadouts();
+  setEditLevel('medium', {silent: true});
   setMode('text2img');
 }
 
