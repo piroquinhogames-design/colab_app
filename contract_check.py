@@ -52,30 +52,28 @@ def main() -> None:
         raise AssertionError("O inicializador deve validar PEFT antes de iniciar o servidor")
     if '"pip", "check"' in launcher_source or '"--upgrade",' in launcher_source:
         raise AssertionError("O inicializador não deve falhar por conflitos globais nem forçar upgrades do Colab")
-    if '"-m", "venv", "--system-site-packages"' not in launcher_source or "VENV_PYTHON" not in launcher_source:
-        raise AssertionError("O inicializador deve criar um ambiente isolado que reutilize apenas o PyTorch/CUDA do Colab")
-    if '[sys.executable, "-m", "pip"' in launcher_source:
-        raise AssertionError("As dependências do painel não podem ser instaladas no Python global do Colab")
+    if '"-m", "venv"' in launcher_source or "VENV_PYTHON" in launcher_source:
+        raise AssertionError("O inicializador não pode depender de venv, pois ensurepip falha no Colab")
+    if '"--no-deps"' not in launcher_source:
+        raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
         raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
 
-    isolated_root = Path(tempfile.mkdtemp(prefix="illustrious-venv-contract-"))
-    original_app_dir, original_venv_dir, original_venv_python = (
-        launch_colab.APP_DIR, launch_colab.VENV_DIR, launch_colab.VENV_PYTHON,
-    )
+    isolated_root = Path(tempfile.mkdtemp(prefix="illustrious-install-contract-"))
+    original_app_dir = launch_colab.APP_DIR
+    calls: list[list[str]] = []
+    original_run = launch_colab.subprocess.run
     try:
         (isolated_root / "requirements.txt").write_text("", encoding="utf-8")
         launch_colab.APP_DIR = isolated_root
-        launch_colab.VENV_DIR = isolated_root / ".venv"
-        launch_colab.VENV_PYTHON = launch_colab.VENV_DIR / "bin" / "python"
+        launch_colab.subprocess.run = lambda command, **_: calls.append(command)
         launch_colab.install_requirements()
-        if not launch_colab.VENV_PYTHON.exists():
-            raise AssertionError("O inicializador deve criar o interpretador isolado antes da instalação")
+        if len(calls) != 1 or calls[0][0] != sys.executable or "--no-deps" not in calls[0]:
+            raise AssertionError("O instalador deve chamar somente o pip global com --no-deps")
     finally:
-        launch_colab.APP_DIR, launch_colab.VENV_DIR, launch_colab.VENV_PYTHON = (
-            original_app_dir, original_venv_dir, original_venv_python,
-        )
+        launch_colab.APP_DIR = original_app_dir
+        launch_colab.subprocess.run = original_run
 
     anonymous = server.app.test_client()
     assert_equal(anonymous.get("/api/history").status_code, 401, "Histórico deve exigir sessão")
