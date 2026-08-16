@@ -40,6 +40,17 @@ def assert_equal(actual, expected, message: str) -> None:
 
 
 def main() -> None:
+    package_root = Path(__file__).resolve().parent
+    requirements = (package_root / "requirements.txt").read_text(encoding="utf-8")
+    if "peft==0.17.0" not in requirements:
+        raise AssertionError("O pacote deve fixar a versão PEFT compatível com carregamento de LoRA")
+    launcher_source = (package_root / "launch_colab.py").read_text(encoding="utf-8")
+    if "def validate_runtime()" not in launcher_source or "PEFT incompatível" not in launcher_source:
+        raise AssertionError("O inicializador deve validar PEFT antes de iniciar o servidor")
+    server_source = (package_root / "server.py").read_text(encoding="utf-8")
+    if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
+        raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
+
     anonymous = server.app.test_client()
     assert_equal(anonymous.get("/api/history").status_code, 401, "Histórico deve exigir sessão")
 

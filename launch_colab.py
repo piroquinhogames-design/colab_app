@@ -7,6 +7,7 @@ Interrompa a célula para encerrar servidor e túnel.
 from __future__ import annotations
 
 import getpass
+import importlib.metadata
 import os
 import re
 import shutil
@@ -36,7 +37,29 @@ def ask_secret(name: str, prompt: str, required: bool = True) -> None:
 
 def install_requirements() -> None:
     print("[setup] Instalando dependências Python do estúdio…")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", str(APP_DIR / "requirements.txt")], check=True)
+    subprocess.run([
+        sys.executable, "-m", "pip", "install", "-q", "--upgrade",
+        "--upgrade-strategy", "only-if-needed", "-r", str(APP_DIR / "requirements.txt"),
+    ], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "check"], check=True)
+
+
+def validate_runtime() -> None:
+    """Falha cedo quando a sessão Colab mantém uma combinação incompatível para LoRA."""
+    import torch
+    import diffusers
+    import peft
+
+    expected_peft = "0.17.0"
+    installed_peft = importlib.metadata.version("peft")
+    if installed_peft != expected_peft:
+        raise RuntimeError(
+            f"PEFT incompatível: encontrado {installed_peft}, esperado {expected_peft}. "
+            "Reinicie o ambiente Colab e execute esta célula novamente."
+        )
+    if not torch.cuda.is_available():
+        raise RuntimeError("GPU CUDA não encontrada. Selecione T4 no Colab e reinicie o ambiente.")
+    print(f"[setup] Runtime validado: torch={torch.__version__}, diffusers={diffusers.__version__}, peft={peft.__version__}")
 
 
 def ensure_cloudflared() -> str:
@@ -85,6 +108,7 @@ def main() -> None:
     os.environ.setdefault("MEGA_FOLDER", "IllustriousStudio")
 
     install_requirements()
+    validate_runtime()
     cloudflared = ensure_cloudflared()
     print("[setup] Iniciando Illustrious LoRA Studio na GPU atual…")
     server = subprocess.Popen(

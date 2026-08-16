@@ -4,13 +4,15 @@ Este pacote executa o painel, a API e a geração de imagens no mesmo runtime Go
 
 ## Início rápido
 
-Envie a pasta `colab_app` ao Colab e execute a célula abaixo com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de ambiente de execução**.
+No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de ambiente de execução**, execute a célula abaixo. Ela baixa exatamente a versão pública do GitHub e evita reutilizar uma pasta ou ZIP antigo.
 
 ```python
+!rm -rf /content/colab_app
+!git clone https://github.com/piroquinhogames-design/colab_app.git /content/colab_app
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, a senha do painel, e-mail e senha do MEGA e, opcionalmente, seu token Civitai. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. Copie o endereço `trycloudflare.com` exibido no fim do setup e abra-o em qualquer dispositivo. A senha de acesso protege o painel durante a sessão do túnel. O servidor também inclui um adaptador de compatibilidade para a dependência MEGA em runtimes Python 3.12 do Colab.
+O inicializador solicitará, sem imprimir os valores, a senha do painel, e-mail e senha do MEGA e, opcionalmente, seu token Civitai. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. Copie o endereço `trycloudflare.com` exibido no fim do setup e abra-o em qualquer dispositivo. A senha de acesso protege o painel durante a sessão do túnel. O servidor também inclui um adaptador de compatibilidade para a dependência MEGA em runtimes Python 3.12 do Colab. A instalação fixa **PEFT 0.17.0**, usado para carregar LoRAs, executa `pip check` e confirma a GPU e as versões importadas antes de iniciar o servidor; portanto, uma incompatibilidade de pacotes interrompe o setup com uma mensagem clara, em vez de falhar durante a geração.
 
 ## Operação
 

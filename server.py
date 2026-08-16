@@ -326,6 +326,13 @@ class GeneratorEngine:
             raise RuntimeError("O checkpoint baixado parece incompleto; tente novamente.")
         target.replace(MODEL_PATH)
 
+    @staticmethod
+    def _configure_memory_savers(pipeline: Any) -> None:
+        """Configura economia de VRAM sem usar os atalhos obsoletos do Diffusers."""
+        pipeline.enable_model_cpu_offload()
+        if getattr(pipeline, "vae", None) is not None:
+            pipeline.vae.enable_slicing()
+
     def _load_pipeline(self) -> None:
         if self.pipe is not None:
             return
@@ -338,11 +345,9 @@ class GeneratorEngine:
         self.pipe = StableDiffusionXLPipeline.from_single_file(
             str(MODEL_PATH), torch_dtype=torch.float16, use_safetensors=True
         )
-        self.pipe.enable_model_cpu_offload()
-        self.pipe.enable_vae_slicing()
+        self._configure_memory_savers(self.pipe)
         self.img_pipe = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
-        self.img_pipe.enable_model_cpu_offload()
-        self.img_pipe.enable_vae_slicing()
+        self._configure_memory_savers(self.img_pipe)
 
     def _download_lora(self, version_id: int) -> Path:
         destination = LORAS / f"civitai_{version_id}.safetensors"
@@ -379,56 +384,58 @@ class GeneratorEngine:
             assert self.pipe is not None and self.img_pipe is not None
             pipeline = self.img_pipe if job.params.mode == "img2img" else self.pipe
             try:
-                self.pipe.unload_lora_weights()
-            except Exception:
-                pass
+                try:
+                    self.pipe.unload_lora_weights()
+                except Exception:
+                    pass
 
-            adapters: list[str] = []
-            weights: list[float] = []
-            for index, selected in enumerate(job.params.loras):
-                path = self._download_lora(selected.version_id)
-                adapter = f"lora_{index}_{selected.version_id}"
-                self.pipe.load_lora_weights(str(path), adapter_name=adapter)
-                adapters.append(adapter)
-                weights.append(selected.weight)
-            if adapters:
-                self.pipe.set_adapters(adapters, adapter_weights=weights)
+                adapters: list[str] = []
+                weights: list[float] = []
+                for index, selected in enumerate(job.params.loras):
+                    path = self._download_lora(selected.version_id)
+                    adapter = f"lora_{index}_{selected.version_id}"
+                    self.pipe.load_lora_weights(str(path), adapter_name=adapter)
+                    adapters.append(adapter)
+                    weights.append(selected.weight)
+                if adapters:
+                    self.pipe.set_adapters(adapters, adapter_weights=weights)
 
-            generator = torch.Generator(device="cuda").manual_seed(job.params.seed)
-            callback_steps = max(job.params.steps, 1)
+                generator = torch.Generator(device="cuda").manual_seed(job.params.seed)
+                callback_steps = max(job.params.steps, 1)
 
-            def progress_callback(_: Any, step: int, __: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
-                update(min(98, int((step + 1) * 100 / callback_steps)), self._vram())
-                return callback_kwargs
+                def progress_callback(_: Any, step: int, __: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
+                    update(min(98, int((step + 1) * 100 / callback_steps)), self._vram())
+                    return callback_kwargs
 
-            options: dict[str, Any] = {
-                "prompt": job.params.prompt,
-                "negative_prompt": job.params.negative_prompt,
-                "num_inference_steps": job.params.steps,
-                "guidance_scale": job.params.guidance,
-                "generator": generator,
-                "callback_on_step_end": progress_callback,
-            }
-            if job.params.mode == "img2img":
-                if not job.params.source_image:
-                    raise RuntimeError("O modo img2img requer uma imagem-base.")
-                with Image.open(job.params.source_image) as source:
-                    options["image"] = source.convert("RGB")
-                    options["strength"] = job.params.strength
+                options: dict[str, Any] = {
+                    "prompt": job.params.prompt,
+                    "negative_prompt": job.params.negative_prompt,
+                    "num_inference_steps": job.params.steps,
+                    "guidance_scale": job.params.guidance,
+                    "generator": generator,
+                    "callback_on_step_end": progress_callback,
+                }
+                if job.params.mode == "img2img":
+                    if not job.params.source_image:
+                        raise RuntimeError("O modo img2img requer uma imagem-base.")
+                    with Image.open(job.params.source_image) as source:
+                        options["image"] = source.convert("RGB")
+                        options["strength"] = job.params.strength
+                        result = pipeline(**options).images[0]
+                else:
+                    options.update({"width": job.params.width, "height": job.params.height})
                     result = pipeline(**options).images[0]
-            else:
-                options.update({"width": job.params.width, "height": job.params.height})
-                result = pipeline(**options).images[0]
 
-            output = OUTPUTS / f"{job.id}.png"
-            result.save(output, format="PNG")
-            update(100, self._vram())
-            try:
-                self.pipe.unload_lora_weights()
-            except Exception:
-                pass
-            torch.cuda.empty_cache()
-            return output
+                output = OUTPUTS / f"{job.id}.png"
+                result.save(output, format="PNG")
+                update(100, self._vram())
+                return output
+            finally:
+                try:
+                    self.pipe.unload_lora_weights()
+                except Exception:
+                    pass
+                torch.cuda.empty_cache()
 
 
 class JobManager:
