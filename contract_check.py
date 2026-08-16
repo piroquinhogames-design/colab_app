@@ -172,6 +172,33 @@ def main() -> None:
         if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
         else: os.environ["MEGA_PASSWORD"] = original_password
 
+    class ReadyMegaClient:
+        def find(self, _name):
+            return {"name": "IllustriousStudio", "h": "folder-node"}
+    class FlakyMega:
+        calls = 0
+        def login(self, *_args, **_kwargs):
+            FlakyMega.calls += 1
+            if FlakyMega.calls == 1:
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+            return ReadyMegaClient()
+    try:
+        server.Mega = FlakyMega
+        os.environ["MEGA_EMAIL"] = "user@example.invalid"
+        os.environ["MEGA_PASSWORD"] = "not-a-real-password"
+        retry_archive = server.MegaArchive()
+        if not retry_archive.connect(attempts=2, retry_delay=0):
+            raise AssertionError("O MEGA deve recuperar a conexão após uma resposta vazia transitória")
+        assert_equal(FlakyMega.calls, 2, "O login MEGA deve repetir a tentativa transitória")
+        if not retry_archive.available or not retry_archive.ensure_connected():
+            raise AssertionError("Reconexão bem-sucedida deve manter o arquivo MEGA disponível")
+    finally:
+        server.Mega = original_mega
+        if original_email is None: os.environ.pop("MEGA_EMAIL", None)
+        else: os.environ["MEGA_EMAIL"] = original_email
+        if original_password is None: os.environ.pop("MEGA_PASSWORD", None)
+        else: os.environ["MEGA_PASSWORD"] = original_password
+
     remote: dict[str, bytes] = {}
     upload_destinations: list[object] = []
     class FakeMegaClient:

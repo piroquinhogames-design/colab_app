@@ -182,6 +182,7 @@ class MegaArchive:
         self.available = False
         self.error: str | None = None
         self.lock = threading.Lock()
+        self.connection_lock = threading.Lock()
 
     @staticmethod
     def _connection_error(exc: Exception) -> str:
@@ -192,33 +193,47 @@ class MegaArchive:
             return "O MEGA encerrou a autenticação sem informar o motivo. Verifique as credenciais e a conexão da sessão Colab."
         return f"Não foi possível conectar ao MEGA: {detail[:180]}"
 
-    def connect(self) -> None:
+    def connect(self, attempts: int = 3, retry_delay: float = 1.0) -> bool:
         email = os.environ.get("MEGA_EMAIL", "").strip()
         password = os.environ.get("MEGA_PASSWORD", "")
-        self.available = False
-        self.client = None
-        self.folder = None
         if not email or not password:
-            self.error = "Configure MEGA_EMAIL e MEGA_PASSWORD para ativar o arquivo persistente."
-            return
-        try:
-            self.client = Mega().login(email, password)
-            found = self.client.find(MEGA_FOLDER)
-            self.folder = self._first_node(found)
-            if not self.folder:
-                self.client.create_folder(MEGA_FOLDER)
-                # mega.py retorna um dicionário no create_folder(), mas upload()
-                # exige o nó remoto (o primeiro item de find()).
-                self.folder = self._first_node(self.client.find(MEGA_FOLDER))
-            if not self.folder:
-                raise RuntimeError(f"A pasta MEGA {MEGA_FOLDER!r} foi criada, mas seu nó não foi localizado")
-            self.available = True
-            self.error = None
-        except Exception as exc:  # credenciais e rede não devem derrubar o servidor
             self.available = False
             self.client = None
             self.folder = None
-            self.error = self._connection_error(exc)
+            self.error = "Configure MEGA_EMAIL e MEGA_PASSWORD para ativar o arquivo persistente."
+            return False
+        last_error: Exception | None = None
+        with self.connection_lock:
+            self.available = False
+            self.client = None
+            self.folder = None
+            for attempt in range(max(1, attempts)):
+                try:
+                    client = Mega().login(email, password)
+                    found = client.find(MEGA_FOLDER)
+                    folder = self._first_node(found)
+                    if not folder:
+                        client.create_folder(MEGA_FOLDER)
+                        # mega.py retorna um dicionário no create_folder(), mas upload()
+                        # exige o nó remoto (o primeiro item de find()).
+                        folder = self._first_node(client.find(MEGA_FOLDER))
+                    if not folder:
+                        raise RuntimeError(f"A pasta MEGA {MEGA_FOLDER!r} foi criada, mas seu nó não foi localizado")
+                    self.client = client
+                    self.folder = folder
+                    self.available = True
+                    self.error = None
+                    return True
+                except Exception as exc:  # credenciais e rede não devem derrubar o servidor
+                    last_error = exc
+                    if attempt < max(1, attempts) - 1:
+                        time.sleep(max(0, retry_delay))
+            self.error = self._connection_error(last_error or RuntimeError("Falha desconhecida no login MEGA"))
+            return False
+
+    def ensure_connected(self) -> bool:
+        """Revalida o arquivo após uma falha inicial sem expor credenciais ao cliente."""
+        return self.available or self.connect()
 
     @staticmethod
     def _first_node(value: Any) -> Any:
@@ -242,7 +257,7 @@ class MegaArchive:
                 raise RuntimeError(f"O cliente MEGA não confirmou o upload de {path.name}")
 
     def save_job(self, job: Job, image_path: Path | None) -> bool:
-        if not self.available:
+        if not self.ensure_connected():
             return False
         metadata_path = OUTPUTS / f"{job.id}.json"
         try:
@@ -265,7 +280,7 @@ class MegaArchive:
 
     def save_last_settings(self, settings: dict[str, Any]) -> bool:
         """Substitui o manifesto único do último sinal renderizado no arquivo MEGA."""
-        if not self.available:
+        if not self.ensure_connected():
             return False
         settings_path = OUTPUTS / LAST_SETTINGS_NAME
         payload = {"updated_at": now_iso(), "settings": settings}
@@ -279,7 +294,7 @@ class MegaArchive:
 
     def load_last_settings(self) -> dict[str, Any] | None:
         """Recupera o manifesto único de preferências sem misturá-lo ao histórico de jobs."""
-        if not self.available or not self.client:
+        if not self.ensure_connected() or not self.client:
             return None
         cache = ROOT / "mega-cache"
         cache.mkdir(exist_ok=True)
@@ -315,7 +330,7 @@ class MegaArchive:
         return found
 
     def list_remote_metadata(self) -> list[dict[str, Any]]:
-        if not self.available or not self.client:
+        if not self.ensure_connected() or not self.client:
             return []
         cache = ROOT / "mega-cache"
         cache.mkdir(exist_ok=True)
@@ -344,7 +359,7 @@ class MegaArchive:
         destination = OUTPUTS / f"{job_id}.png"
         if destination.exists():
             return destination
-        if not self.available or not self.client:
+        if not self.ensure_connected() or not self.client:
             return None
         try:
             node = self._first_node(self.client.find(destination.name))
@@ -645,6 +660,9 @@ def logout():
 @app.route("/api/bootstrap")
 @authentication_required
 def bootstrap():
+    archive.ensure_connected()
+    if archive.available:
+        manager.restore()
     last_settings = archive.load_last_settings()
     return jsonify({
         "csrf": session.get("csrf"), "jobs": manager.public_jobs(),
@@ -756,6 +774,7 @@ def history():
 @authentication_required
 @csrf_required
 def sync_history():
+    archive.ensure_connected()
     restored = manager.restore()
     return jsonify({
         "items": manager.public_jobs(),
