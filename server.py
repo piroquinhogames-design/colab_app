@@ -642,7 +642,17 @@ class GeneratorEngine:
                 raise RuntimeError("Configure ANIMA_DIFFUSERS_REPO com um repositório Diffusers Anima antes de gerar.")
             from diffusers import DiffusionPipeline
             try:
-                self.pipe = DiffusionPipeline.from_pretrained(repo_id, torch_dtype=torch.bfloat16, device_map="cuda")
+                # `device_map="cuda"` não é uma estratégia válida para o
+                # dispatch do Accelerate; em uma T4, carregamos em fp16 e
+                # movemos explicitamente a pipeline para CUDA.
+                self.pipe = DiffusionPipeline.from_pretrained(
+                    repo_id,
+                    torch_dtype=torch.float16,
+                    use_safetensors=True,
+                )
+                self.pipe.to("cuda")
+                if getattr(self.pipe, "vae", None) is not None:
+                    self.pipe.vae.enable_slicing()
                 self.img_pipe = None
                 self.loaded_model_id = spec["id"]
                 return
@@ -748,9 +758,14 @@ class GeneratorEngine:
         with self.load_lock:
             spec = get_model_spec(job.params.model_id)
             self._load_pipeline(spec)
-            assert self.pipe is not None and self.img_pipe is not None
+            assert self.pipe is not None
             self._apply_sampler(job.params.sampler)
-            pipeline = self.img_pipe if job.params.mode == "img2img" else self.pipe
+            if job.params.mode == "img2img":
+                if self.img_pipe is None:
+                    raise RuntimeError("O engine Anima configurado suporta apenas TXT→IMG no momento.")
+                pipeline = self.img_pipe
+            else:
+                pipeline = self.pipe
             try:
                 try:
                     self.pipe.unload_lora_weights()
