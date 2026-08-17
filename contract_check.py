@@ -81,6 +81,8 @@ def main() -> None:
         or "AuraFlowPipeline.from_pretrained" not in server_source
         or "AuraFlowTransformer2DModel" not in server_source
         or "AuraFlowTransformer2DModel.from_single_file" not in server_source
+        or "_load_auraflow_checkpoint" not in server_source
+        or "from safetensors.torch import load_file" not in server_source
         or "response.status_code == 206" not in server_source
         or 'headers["Range"]' not in server_source
         or "purplesmartai/pony-v7-base" not in server_source

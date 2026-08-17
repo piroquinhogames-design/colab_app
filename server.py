@@ -660,6 +660,23 @@ class GeneratorEngine:
         return str(snapshot)
 
     @staticmethod
+    def _load_auraflow_checkpoint(model_path: Path) -> dict[str, Any]:
+        """Carrega e normaliza namespaces emitidos por conversores Civitai."""
+        from safetensors.torch import load_file
+
+        checkpoint = load_file(str(model_path), device="cpu")
+        # O Pony V7 single-file pode usar `model.double_layers.*`, enquanto o
+        # conversor do Diffusers espera `double_layers.*` no nível raiz.
+        for prefix in ("model.diffusion_model.", "diffusion_model.", "model."):
+            marker = f"{prefix}double_layers."
+            if any(key.startswith(marker) for key in checkpoint):
+                return {
+                    (key[len(prefix):] if key.startswith(prefix) else key): value
+                    for key, value in checkpoint.items()
+                }
+        return checkpoint
+
+    @staticmethod
     def _configure_memory_savers(pipeline: Any) -> None:
         """Configura economia de VRAM para pipelines DiffusionPipeline clássicas."""
         if hasattr(pipeline, "enable_attention_slicing"):
@@ -706,13 +723,15 @@ class GeneratorEngine:
                 # baixar novamente os três shards F32 (~27 GB) do transformer.
                 model_path = self.ensure_checkpoint(spec)
                 snapshot = self._download_auraflow_snapshot(repo)
+                checkpoint = self._load_auraflow_checkpoint(model_path)
                 transformer = AuraFlowTransformer2DModel.from_single_file(
-                    str(model_path),
+                    checkpoint,
                     config=snapshot,
                     subfolder="transformer",
                     torch_dtype=torch.float16,
                     local_files_only=True,
                 )
+                del checkpoint
                 self.pipe = AuraFlowPipeline.from_pretrained(
                     snapshot,
                     transformer=transformer,
