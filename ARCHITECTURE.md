@@ -6,27 +6,26 @@ O pacote é executado integralmente em uma sessão Google Colab com GPU T4. O pr
 
 O formulário principal mostra somente o modelo ativo. Checkpoint, sampler e loja de modelos ficam no diálogo **Configurações**. O bootstrap envia os perfis públicos com família, base, engine, disponibilidade, cache e defaults. A interface aplica o preset do perfil e atualiza automaticamente os rótulos e as lojas de LoRAs e prompts.
 
-O perfil inicial é `nova-exanime-am`, com base `Anima`, URL de download Civitai para a versão `3226184` e engine `anima`. Anima não passa pelo carregador `StableDiffusionXLPipeline`; sem `ANIMA_ENGINE=diffusers` e `ANIMA_DIFFUSERS_REPO`, o perfil continua selecionável e pesquisável, mas a geração é bloqueada com uma mensagem explicativa. Isso evita tratar uma arquitetura Anima como SDXL por acidente.
+O perfil inicial é `pony-v7-base`, com base `Pony`, modelo Civitai `1901521`, versão `2152373` e engine `sdxl`. O checkpoint é carregado pelo `StableDiffusionXLPipeline.from_single_file`, com pipelines text-to-image e image-to-image e defaults adaptados para a família Pony.
 
 ## Catálogo Civitai
 
-A rota `GET /api/model-catalog` consulta checkpoints Civitai com query, tag, família, ordenação, paginação e filtro adulto. A base Civitai é traduzida por `civitai_base_for_family`: Anima, Illustrious/NoobAI, Pony, SDXL, Flux e SD 3. Cada versão é convertida em um perfil público com família, engine, defaults e arquivo principal.
+A rota `GET /api/model-catalog` consulta checkpoints Civitai com query, tag, família, ordenação, paginação e filtro adulto. A base Civitai é traduzida por `civitai_base_for_family`: Illustrious/NoobAI, Pony, SDXL, Flux e SD 3. Cada versão é convertida em um perfil público com família, engine, defaults e arquivo principal.
 
 A rota `POST /api/model-profile` recebe somente o identificador numérico do modelo/versão e cria um perfil interno validado pelo servidor. A seleção é mantida em `MODEL_SPECS` e serializada em `model_profiles.json` dentro de `STUDIO_ROOT`, permitindo que o catálogo selecionado sobreviva ao reinício do processo. A URL de download é construída no servidor a partir do version ID, não aceita uma URL arbitrária enviada pelo navegador.
 
 ## Lojas dependentes da família
 
-A rota `GET /api/catalog` inicia em `family=anima` e converte a família para o parâmetro `baseModels` da API Civitai. Quando o modelo muda, o frontend envia a nova família, atualiza a loja de LoRAs e limita os resultados às versões cujo `baseModel` seja compatível.
+A rota `GET /api/catalog` inicia em `family=pony` e converte a família para o parâmetro `baseModels` da API Civitai. Quando o modelo muda, o frontend envia a nova família, atualiza a loja de LoRAs e limita os resultados às versões cujo `baseModel` seja compatível.
 
 A rota `GET /api/prompt-store` também recebe a família ativa. O servidor consulta imagens com metadados, extrai recursos Civitai, prompts, dimensões e LoRAs, filtra recursos de outra família quando há informação suficiente e embaralha os itens no modo `Random`. A busca textual combina prompt, negative prompt, autor, tags e família; os filtros de chips são combinados como interseção.
 
 ## Engines e perfis
 
-O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Para `anima`, exige o engine Diffusers Anima configurado antes de iniciar; não há fallback silencioso para SDXL. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
+O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
 
 | Família | Engine | Loja de LoRAs | Estado padrão |
 |---|---|---|---|
-| `anima` | `anima` | Anima | Selecionável; geração exige engine configurado |
 | `sdxl-illustrious` | `sdxl` | Illustrious | Geração disponível com pipeline SDXL |
 | `pony` | `sdxl` | Pony | Geração disponível com pipeline SDXL |
 | `sdxl` | `sdxl` | SDXL 1.0 | Geração disponível com pipeline SDXL |
@@ -61,12 +60,12 @@ A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execu
   "params": {
     "prompt": "...",
     "negative_prompt": "...",
-    "model": "nova-exanime-am",
+    "model": "pony-v7-base",
     "sampler": "euler_a",
     "seed": 123456,
     "mode": "text2img | img2img",
-    "steps": 40,
-    "guidance": 4.5,
+    "steps": 30,
+    "guidance": 5.5,
     "width": 1024,
     "height": 1024,
     "strength": 0.65,

@@ -70,13 +70,13 @@ def validate_runtime() -> None:
     diffusers_version = Version(diffusers.__version__)
     if diffusers_version < Version("0.39.0"):
         raise RuntimeError(
-            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline Anima. "
+            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline Pony/SDXL. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     transformers_version = Version(importlib.metadata.version("transformers"))
     if transformers_version < Version("4.51.0"):
         raise RuntimeError(
-            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para Qwen3/Anima. "
+            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para o pipeline Pony/SDXL. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     print(
@@ -152,15 +152,15 @@ def main() -> None:
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
 
-    # Configuração técnica padronizada: usuários comuns não precisam conhecer
-    # engine, scheduler ou repositório Diffusers para iniciar o estúdio.
-    if not os.environ.get("ANIMA_ENGINE", "").strip():
-        os.environ["ANIMA_ENGINE"] = "diffusers"
-    if not os.environ.get("ANIMA_DIFFUSERS_REPO", "").strip():
-        os.environ["ANIMA_DIFFUSERS_REPO"] = "circlestone-labs/Anima-Base-v1.0-Diffusers"
-    print("[setup] Engine Anima padronizado; repositório Diffusers definido automaticamente.")
+    # Configuração técnica padronizada: o perfil Pony V7 Base usa o pipeline SDXL
+    # clássico e não exige engine adicional ou repositório Diffusers separado.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
+    os.environ.setdefault("MODEL_ID", "pony-v7-base")
+    os.environ.setdefault("MODEL_URL", "https://civitai.com/api/download/models/2152373")
+    os.environ.setdefault("MODEL_PATH", f"{os.environ["STUDIO_ROOT"]}/models/pony_v7_base.safetensors")
+    os.environ.setdefault("MODEL_FAMILY", "pony")
+    print("[setup] Perfil Pony V7 Base padronizado; pipeline SDXL configurado automaticamente.")
 
     install_requirements()
     validate_runtime()

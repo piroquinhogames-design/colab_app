@@ -12,7 +12,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O engine Anima e o repositório Diffusers são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
+O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Pony V7 Base e o pipeline SDXL são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
 A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Diffusers 0.39.0**, **Accelerate 1.3.0+**, **Hugging Face Hub 0.34.0–0.x**, **PEFT 0.17.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 
@@ -24,11 +24,11 @@ O painel usa a identidade **ModelLab Studio**, com tema escuro, camadas translú
 
 O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferece remix e possui um botão de exclusão que remove o registro local e, quando sincronizado, o PNG e o manifesto correspondente do MEGA.
 
-## Modelo padrão: Nova EXAnime AM / Anima
+## Modelo padrão: Pony V7 Base
 
-O perfil inicial é **Nova EXAnime AM**, obtido do modelo Civitai `2856434`, versão `3226184`, com base declarada como **Anima**. A família Anima não deve ser enviada ao `StableDiffusionXLPipeline`: ela possui arquitetura própria e usa um engine separado. Por esse motivo, o backend marca o perfil como `engine=anima` e carrega o repositório pela `ModularPipeline` do Diffusers 0.39.0, em vez de tentar tratar o arquivo como SDXL ou procurar um `model_index.json` de pipeline clássica.
+O perfil inicial é **Pony V7 Base**, obtido do modelo Civitai `1901521`, versão `2152373`, com base declarada como **Pony**. O checkpoint é um modelo SDXL e é carregado pelo `StableDiffusionXLPipeline.from_single_file`, com suporte a text-to-image, image-to-image, LoRAs compatíveis e economia automática de memória para uma GPU T4.
 
-O checkpoint Civitai é usado como referência e download do perfil. O inicializador já define automaticamente `ANIMA_ENGINE=diffusers` e `ANIMA_DIFFUSERS_REPO=circlestone-labs/Anima-Base-v1.0-Diffusers`, portanto o usuário comum não precisa configurar essas variáveis. Em uma T4, o backend materializa os componentes em FP16 e os move explicitamente para CUDA. Usuários avançados ainda podem substituí-las antes de executar o inicializador, caso tenham um engine Diffusers Anima diferente.
+O endpoint oficial de download é `https://civitai.com/api/download/models/2152373`. O inicializador define automaticamente o perfil, a família e o caminho de cache, portanto o usuário comum não precisa configurar esses valores manualmente.
 
 ## Configurações, famílias e presets
 
@@ -36,24 +36,23 @@ Os modelos ficam ocultos no formulário principal e são administrados pela aba 
 
 | Família | Engine | Defaults iniciais | Loja de LoRAs |
 |---|---|---|---|
-| `anima` | `anima` | 40 steps, CFG 4.5, Euler a | Anima |
 | `sdxl-illustrious` | `sdxl` | 28 steps, CFG 6.5, Euler a | Illustrious |
 | `pony` | `sdxl` | 30 steps, CFG 5.5, Euler a | Pony |
 | `sdxl` | `sdxl` | 28 steps, CFG 6.5, Euler a | SDXL 1.0 |
 | `flux` | engine separado | 28 steps, CFG 3.5 | Flux |
 | `sd3` | engine separado | 28 steps, CFG 5.0 | SD 3 |
 
-Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los pelo pipeline SDXL. Isso evita incompatibilidades de arquitetura. A família `anima` também bloqueia img2img até que exista um workflow Anima específico configurado.
+Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los pelo pipeline SDXL. Isso evita incompatibilidades de arquitetura. O pipeline Pony permite text-to-image e image-to-image, desde que o checkpoint e as LoRAs selecionadas sejam compatíveis com Pony.
 
 ## Loja de modelos Civitai
 
-A aba **CONFIGURAÇÕES → ABRIR LOJA DE MODELOS** consulta checkpoints no Civitai com busca por nome, autor, tag, família, ordenação, paginação e opção de conteúdo adulto condicionado ao `CIVITAI_TOKEN`. O usuário pode filtrar Anima, Illustrious/NoobAI, Pony, SDXL, Flux e SD3.
+A aba **CONFIGURAÇÕES → ABRIR LOJA DE MODELOS** consulta checkpoints no Civitai com busca por nome, autor, tag, família, ordenação, paginação e opção de conteúdo adulto condicionado ao `CIVITAI_TOKEN`. O usuário pode filtrar Illustrious/NoobAI, Pony, SDXL, Flux e SD3.
 
 Ao escolher **USAR ESTE PERFIL**, o servidor registra o modelo selecionado na sessão e a interface aplica imediatamente a família, engine, base, sampler, steps, guidance, strength e filtros de loja correspondentes. A URL do modelo e a versão do Civitai ficam associadas ao perfil para que o checkpoint seja baixado sob demanda quando o engine suportar a família.
 
 ## Loja de LoRAs e Loja de Prompts
 
-A loja de LoRAs começa em **Anima**, pois essa é a família do Nova EXAnime AM. Ao mudar o checkpoint para Pony, Illustrious ou SDXL, a busca usa automaticamente o `baseModels` correspondente e a interface atualiza o rótulo da família. Até três LoRAs podem ser usadas simultaneamente, com pesos entre 0 e 1,5.
+A loja de LoRAs começa em **Pony**, pois essa é a família do Pony V7 Base. Ao mudar o checkpoint para Pony, Illustrious ou SDXL, a busca usa automaticamente o `baseModels` correspondente e a interface atualiza o rótulo da família. Até três LoRAs podem ser usadas simultaneamente, com pesos entre 0 e 1,5.
 
 A Loja de Prompts também recebe a família ativa. Ela usa metadados de recursos do Civitai quando disponíveis para descartar imagens associadas a outra família, preserva busca por texto, tags combináveis, ordenação e remix, e embaralha localmente os resultados quando o modo **ALEATÓRIO** é usado. Isso produz variação real sem perder os filtros de família.
 
@@ -93,12 +92,10 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 | Variável | Finalidade | Padrão |
 |---|---|---|
 | `MEGA_FOLDER` | Pasta remota para imagens e metadados | `ModelLabStudio` |
-| `MODEL_ID` | Identificador do perfil padrão | `nova-exanime-am` |
-| `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/3226184` |
-| `MODEL_PATH` | Cache local do perfil padrão | `/content/modellab-studio/models/nova_exanime_am.safetensors` |
-| `MODEL_FAMILY` | Família declarada do perfil padrão | `anima` |
-| `ANIMA_ENGINE` | Habilita o carregador Anima configurado | `diffusers` |
-| `ANIMA_DIFFUSERS_REPO` | Repositório Diffusers carregado pelo engine Anima | `circlestone-labs/Anima-Base-v1.0-Diffusers` |
+| `MODEL_ID` | Identificador do perfil padrão | `pony-v7-base` |
+| `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/2152373` |
+| `MODEL_PATH` | Cache local do perfil padrão | `/content/modellab-studio/models/pony_v7_base.safetensors` |
+| `MODEL_FAMILY` | Família declarada do perfil padrão | `pony` |
 | `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
 | `STUDIO_ROOT` | Diretório temporário da sessão | `/content/modellab-studio` |
 | `PORT` | Porta local do Flask | `7860` |

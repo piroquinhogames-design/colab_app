@@ -48,30 +48,10 @@ A página da versão Epsilon 1.1 declara base `noobai-XL_v1.0`, com tags nativas
 
 Essa variante parece tecnicamente mais adequada ao ModelLab do que NoobAI V-Pred quando a prioridade é manter compatibilidade com LoRAs: continua sendo uma família NoobAI/Illustrious, mas não exige o scheduler V-Pred. Ainda assim, a compatibilidade não é universal; LoRAs treinadas especificamente em Epsilon/NoobAI são a escolha mais segura.
 
-## Nova EXAnime AM — API pública do Civitai
+## Pony V7 Base — Civitai
 
-Fonte: https://civitai.com/api/v1/models/2856434
+Fonte: https://civitai.red/models/1901521/pony-v7-base?modelVersionId=2152373
 
-A API pública confirma o nome **Nova EXAnime AM**, base model **Anima**, versão `v1.0`, e arquivo SafeTensor disponível em `https://civitai.com/api/download/models/3226184`. O arquivo está marcado como `bf16` nos metadados. O preset do ModelLab deve usar o `model_id` interno `nova-exanime-am`, família `anima`, URL de download `.../3226184` e defaults próprios da família Anima.
+A página consultada identifica o checkpoint **Pony V7 Base**, versão **v7.0**, modelo Civitai `1901521` e versão `2152373`. O arquivo SafeTensor fp16 indicado como melhor correspondência é `base-ppt12_2-917514-ema2.safetensors`, com aproximadamente 12,78 GB. O perfil do ModelLab usa o endpoint `https://civitai.com/api/download/models/2152373`, família `pony`, engine `sdxl`, 30 steps, CFG 5,5, strength 0,65 e sampler Euler a.
 
-## Compatibilidade de engine Anima
-
-Fontes: https://huggingface.co/circlestone-labs/Anima-Base-v1.0-Diffusers, https://huggingface.co/circlestone-labs/Anima, https://civitai.com/articles/33274/anima-generation-guide-part-1-general-model-a-bit-of-history
-
-Anima é uma arquitetura própria de aproximadamente 2B parâmetros, derivada de Cosmos-Predict2 e usando Qwen3 0.6B como encoder. O card oficial indica uso de `DiffusionPipeline.from_pretrained` no formato Diffusers, enquanto o checkpoint Civitai é nativo de workflows ComfyUI; portanto não deve passar pelo atual `StableDiffusionXLPipeline.from_single_file`. O card recomenda, para Anima Aesthetic/Base, 30–50 steps, CFG 4–5 e samplers como `euler_a`; LoRAs devem ser treinadas para a família Anima/Base. O backend deve marcar `engine=anima` e bloquear o carregador SDXL quando não houver um engine Anima configurado.
-
-## Correção do repositório/engine Anima — 2026-08-16
-
-A página oficial `https://huggingface.co/circlestone-labs/Anima-Base-v1.0-Diffusers` existe e informa um modelo Diffusers de 2B em BF16. A documentação atual do Diffusers em `https://huggingface.co/docs/diffusers/en/api/pipelines/anima` descreve Anima como uma pipeline modular experimental: `ModularPipeline.from_pretrained("circlestone-labs/Anima-Base-v1.0-Diffusers")`, seguida de `pipe.load_components(torch_dtype=torch.bfloat16)` e `pipe.to("cuda")`. O pipeline suporta text2image e usa `FlowMatchEulerDiscreteScheduler`.
-
-Também existe a conversão comunitária `https://huggingface.co/CalamitousFelicitousness/Anima-1.0-Base-Diffusers`, que declara arquitetura `CosmosTransformer3DModel`, Qwen3, adapter LLM e VAE AutoencoderKLWan; recomenda 30–50 steps, CFG 4–5 e resolução 512–1536. A causa do 404 observado no painel foi um endereço que não encontrou `model_index.json` no momento do carregamento, embora o repositório `circlestone-labs/Anima-Base-v1.0-Diffusers` seja listado publicamente. A correção deve usar o pipeline modular da versão do Diffusers compatível com o repositório ou validar o manifesto antes de tentar carregar.
-
-## Ajuste final da API modular
-
-A API oficial documenta `pipe.load_components(dtype=torch.bfloat16)`, mas a tentativa de usar `dtype=torch.float16` diretamente no runtime T4 encaminha o argumento ao `CosmosTransformer3DModel`, que o rejeita. O ModelLab mantém `ModularPipeline.from_pretrained(...)`, carrega com `load_components()` sem kwargs e converte os módulos compatíveis explicitamente para FP16/CUDA. O manifesto validado é `modular_model_index.json` (HTTP 200); `model_index.json` retorna HTTP 404 por não ser uma pipeline clássica.
-
-## API oficial confirmada do Anima
-
-A documentação oficial do Diffusers mostra `ModularPipeline.from_pretrained("circlestone-labs/Anima-Base-v1.0-Diffusers")`, `pipe.load_components(dtype=torch.bfloat16)` e `pipe.to("cuda")`. A especificação `AnimaAutoBlocks` aceita `prompt`, `negative_prompt`, `image`, `height`, `width`, `generator`, `num_inference_steps`, `strength`, `latents` e `output_type`; ela não lista `guidance_scale` nem `callback_on_step_end` como entradas da chamada. Fonte: https://huggingface.co/docs/diffusers/main/api/pipelines/anima.
-
-Na execução real com Diffusers 0.39.0, `dtype=torch.float16` foi encaminhado ao construtor de `CosmosTransformer3DModel`, que rejeitou esse argumento. O workaround será carregar os componentes sem `dtype` e converter/mover os módulos compatíveis explicitamente para CUDA/FP16, além de não enviar parâmetros exclusivos de SDXL ao Anima.
+A integração usa o carregador SDXL já existente, com suporte a text-to-image, image-to-image e LoRAs cuja base seja compatível com Pony.

@@ -51,28 +51,18 @@ for directory in (MODELS, LORAS, OUTPUTS, UPLOADS):
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MAX_LORAS = 3
 MODEL_URL = os.environ.get(
-    "MODEL_URL", "https://civitai.com/api/download/models/3226184"
+    "MODEL_URL", "https://civitai.com/api/download/models/2152373"
 )
-MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "nova_exanime_am.safetensors"))
-DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "nova-exanime-am")
+MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "pony_v7_base.safetensors"))
+DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "pony-v7-base")
 MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "ModelLabStudio")
 CIVITAI_BASE = "https://civitai.com/api/v1"
 LAST_SETTINGS_NAME = "last_settings.json"
 MODEL_PROFILE_CACHE = ROOT / "model_profiles.json"
 
 # A família controla tanto a busca de LoRAs quanto os defaults enviados ao motor.
-# Anima tem arquitetura própria; o engine é marcado explicitamente para impedir que
-# um checkpoint Anima seja tratado como SDXL por acidente.
-ANIMA_ENGINE = os.environ.get("ANIMA_ENGINE", "").strip()
-ANIMA_DEVICE_MAP = os.environ.get("ANIMA_DEVICE_MAP", "").strip()
-ANIMA_CPU_OFFLOAD = os.environ.get("ANIMA_CPU_OFFLOAD", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 MODEL_FAMILY_PROFILES: dict[str, dict[str, Any]] = {
-    "anima": {
-        "base": "Anima", "engine": "anima", "lora_base": "Anima",
-        "defaults": {"steps": 40, "guidance": 4.5, "strength": 0.65, "sampler": "euler_a"},
-        "notes": "Arquitetura Anima; use LoRAs treinadas para Anima/Base ou uma variante explicitamente compatível.",
-    },
     "sdxl-illustrious": {
         "base": "Illustrious", "engine": "sdxl", "lora_base": "Illustrious",
         "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
@@ -105,8 +95,6 @@ SUPPORTED_SAMPLERS = {"euler_a", "euler", "dpmpp_2m", "dpmpp_2m_sde_gpu"}
 
 def normalize_model_family(base_model: str | None) -> str:
     value = re.sub(r"[^a-z0-9]+", " ", str(base_model or "").lower()).strip()
-    if "anima" in value:
-        return "anima"
     if "pony" in value:
         return "pony"
     if "illustrious" in value or "noobai" in value or "noob ai" in value:
@@ -142,11 +130,11 @@ def version_matches_family(version: dict[str, Any], family: str | None) -> bool:
 
 def _load_model_specs() -> dict[str, dict[str, Any]]:
     """Carrega checkpoints com perfil de família e defaults adaptativos."""
-    default_family = os.environ.get("MODEL_FAMILY", "anima").strip().lower()
+    default_family = os.environ.get("MODEL_FAMILY", "pony").strip().lower()
     base_profile = family_profile(default_family)
     default = {
         "id": DEFAULT_MODEL_ID,
-        "name": "Nova EXAnime AM" if DEFAULT_MODEL_ID == "nova-exanime-am" else DEFAULT_MODEL_ID,
+        "name": "Pony V7 Base" if DEFAULT_MODEL_ID == "pony-v7-base" else DEFAULT_MODEL_ID,
         "url": MODEL_URL,
         "path": str(MODEL_PATH),
         "family": default_family,
@@ -155,7 +143,8 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
         "lora_base": base_profile["lora_base"],
         "defaults": dict(base_profile["defaults"]),
         "notes": base_profile["notes"],
-        "civitai_model_id": 2856434 if DEFAULT_MODEL_ID == "nova-exanime-am" else None,
+        "civitai_model_id": 1901521 if DEFAULT_MODEL_ID == "pony-v7-base" else None,
+        "version_id": 2152373 if DEFAULT_MODEL_ID == "pony-v7-base" else None,
     }
     specs: dict[str, dict[str, Any]] = {DEFAULT_MODEL_ID: default}
     raw = os.environ.get("MODELS_CONFIG", "").strip()
@@ -175,6 +164,8 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
             if not model_id:
                 continue
             candidate_family = str(candidate.get("family") or normalize_model_family(candidate.get("base"))).strip().lower()
+            if candidate_family not in SUPPORTED_MODEL_FAMILIES:
+                continue
             inherited = family_profile(candidate_family)
             profile = {**default, **inherited, **candidate}
             profile["id"] = model_id
@@ -195,6 +186,8 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
             if not model_id or model_id == DEFAULT_MODEL_ID:
                 continue
             candidate_family = str(candidate.get("family") or normalize_model_family(candidate.get("base"))).strip().lower()
+            if candidate_family not in SUPPORTED_MODEL_FAMILIES:
+                continue
             inherited = family_profile(candidate_family)
             profile = {**default, **inherited, **candidate}
             profile["id"] = model_id
@@ -219,7 +212,7 @@ def get_model_spec(model_id: str | None = None) -> dict[str, Any]:
 def public_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
     family = str(spec.get("family", "sdxl"))
     engine = str(spec.get("engine") or family_profile(family).get("engine", "unsupported"))
-    ready = engine == "sdxl" or (engine == "anima" and bool(ANIMA_ENGINE))
+    ready = engine == "sdxl"
     return {
         "id": spec["id"], "name": spec.get("name", spec["id"]),
         "family": family, "base": spec.get("base", family_profile(family)["base"]),
@@ -227,6 +220,7 @@ def public_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "engine": engine, "ready": ready, "cached": Path(spec["path"]).exists(),
         "defaults": spec.get("defaults", family_profile(family)["defaults"]),
         "notes": spec.get("notes", ""), "civitai_model_id": spec.get("civitai_model_id"),
+        "version_id": spec.get("version_id"),
     }
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
@@ -622,132 +616,6 @@ class GeneratorEngine:
             if hasattr(vae, "enable_slicing"):
                 vae.enable_slicing()
 
-    @staticmethod
-    def _prepare_anima_for_t4(pipeline: Any, torch_module: Any, *, cpu_offload: bool = True) -> None:
-        """Prepara o Anima em FP16 sem materializar tudo na VRAM de uma vez.
-
-        O checkpoint Anima usa `ModularPipeline`, que não herda os atalhos de
-        `DiffusionPipeline` como `enable_model_cpu_offload`. Quando Accelerate
-        está disponível, cada módulo de rede recebe um hook de CPU offload e só
-        ocupa a T4 durante o próprio forward. Sem offload, o fallback move os
-        módulos diretamente para CUDA.
-        """
-        components = getattr(pipeline, "components", {})
-        execution_device = torch_module.device("cuda")
-        if cpu_offload:
-            try:
-                from accelerate import cpu_offload
-            except ImportError as error:
-                raise RuntimeError(
-                    "O offload do Anima requer Accelerate. Reexecute o inicializador para instalar "
-                    "accelerate e reinicie o runtime do Colab."
-                ) from error
-        for component in components.values():
-            if not isinstance(component, torch_module.nn.Module):
-                continue
-            component.half()
-            if cpu_offload:
-                cpu_offload(component, execution_device=execution_device)
-            else:
-                component.to(execution_device)
-
-        vae = components.get("vae") if isinstance(components, dict) else getattr(pipeline, "vae", None)
-        if vae is not None:
-            if hasattr(vae, "enable_tiling"):
-                vae.enable_tiling()
-            if hasattr(vae, "enable_slicing"):
-                vae.enable_slicing()
-
-    @staticmethod
-    def _normalize_anima_guider_input_fields(pipeline: Any) -> int:
-        """Normaliza a configuração do denoiser Anima entre versões do Diffusers.
-
-        Algumas versões/runtime do Diffusers desserializam `guider_input_fields`
-        como lista, embora o bloco oficial espere um dicionário e chame
-        `.keys()` durante a inferência. O mapa abaixo é o contrato oficial do
-        Anima e também converte valores de lista em tuplas.
-        """
-        expected = {
-            "encoder_hidden_states": ("prompt_embeds", "negative_prompt_embeds"),
-        }
-        root = getattr(pipeline, "_blocks", None)
-        visited: set[int] = set()
-        normalized = 0
-
-        def visit(block: Any) -> None:
-            nonlocal normalized
-            if block is None or id(block) in visited:
-                return
-            visited.add(id(block))
-
-            fields = getattr(block, "_guider_input_fields", None)
-            if isinstance(fields, list):
-                block._guider_input_fields = dict(expected)
-                normalized += 1
-            elif isinstance(fields, dict):
-                fixed = {}
-                changed = False
-                for key, value in fields.items():
-                    if isinstance(value, list):
-                        value = tuple(value)
-                        changed = True
-                    fixed[key] = value
-                if changed:
-                    block._guider_input_fields = fixed
-                    normalized += 1
-
-            sub_blocks = getattr(block, "sub_blocks", None)
-            if sub_blocks is not None and hasattr(sub_blocks, "values"):
-                for child in sub_blocks.values():
-                    visit(child)
-
-        visit(root)
-        return normalized
-
-    @staticmethod
-    def _extract_first_image(result: Any) -> Image.Image:
-        """Normaliza saídas da ModularPipeline e da DiffusionPipeline clássica."""
-        if isinstance(result, dict):
-            images = result.get("images", result.get("image"))
-        else:
-            images = getattr(result, "images", None)
-            if images is None and hasattr(result, "get"):
-                images = result.get("images", result.get("image"))
-            if images is None:
-                images = result
-        if isinstance(images, (list, tuple)):
-            if not images:
-                raise RuntimeError("A pipeline terminou sem produzir imagens.")
-            images = images[0]
-        if not isinstance(images, Image.Image):
-            raise RuntimeError(f"A pipeline retornou uma saída inesperada: {type(images).__name__}.")
-        return images
-
-    @staticmethod
-    def _load_anima_fast_tokenizers(repo_id: str) -> tuple[Any, Any]:
-        """Carrega os tokenizers Fast publicados pelo checkpoint Anima.
-
-        O modular_model_index do checkpoint declara Qwen2Tokenizer e T5Tokenizer,
-        mas o repositório contém apenas tokenizer.json. As classes lentas tentam
-        abrir vocabularies auxiliares ausentes e acabam recebendo um caminho None.
-        """
-        from transformers import AutoTokenizer, T5TokenizerFast
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            repo_id,
-            subfolder="tokenizer",
-            use_fast=True,
-        )
-        t5_tokenizer = T5TokenizerFast.from_pretrained(
-            repo_id,
-            subfolder="t5_tokenizer",
-        )
-        if not getattr(tokenizer, "is_fast", False):
-            raise RuntimeError("O tokenizer Qwen do Anima não foi carregado na variante Fast.")
-        if not getattr(t5_tokenizer, "is_fast", False):
-            raise RuntimeError("O tokenizer T5 do Anima não foi carregado na variante Fast.")
-        return tokenizer, t5_tokenizer
-
     def _release_pipeline(self) -> None:
         self.pipe = None
         self.img_pipe = None
@@ -769,56 +637,6 @@ class GeneratorEngine:
         if not torch.cuda.is_available():
             raise RuntimeError("Nenhuma GPU CUDA foi detectada. Ative uma sessão T4 no Colab e reinicie o servidor.")
         engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
-        if engine == "anima":
-            if ANIMA_ENGINE != "diffusers":
-                raise RuntimeError("O checkpoint é Anima, mas ANIMA_ENGINE não está configurado como diffusers. O arquivo Civitai é nativo de workflow Anima/ComfyUI.")
-            repo_id = str(spec.get("diffusers_repo") or os.environ.get("ANIMA_DIFFUSERS_REPO", "")).strip()
-            if not repo_id:
-                raise RuntimeError("Configure ANIMA_DIFFUSERS_REPO com um repositório Diffusers Anima antes de gerar.")
-            try:
-                # Anima não é uma pipeline SDXL clássica. Desde Diffusers
-                # 0.39, o repositório oficial é carregado pela pipeline
-                # modular e seus componentes são materializados explicitamente.
-                from diffusers import ModularPipeline
-            except ImportError as error:
-                raise RuntimeError(
-                    "O runtime não possui suporte à pipeline modular do Anima. "
-                    "Reexecute o inicializador para instalar Diffusers 0.39.0+."
-                ) from error
-            try:
-                # `torch_dtype` é o argumento aceito pelo loader de componentes.
-                # Sem ele, o Anima é materializado em FP32 e pode estourar a VRAM
-                # da T4 antes que a conversão para FP16 aconteça.
-                self.pipe = ModularPipeline.from_pretrained(repo_id)
-                # `low_cpu_mem_usage` evita a cópia inicial completa em FP32.
-                # `device_map` é opcional porque aplicar "auto" separadamente
-                # a cada componente pode superestimar a VRAM disponível na T4.
-                load_kwargs: dict[str, Any] = {
-                    "torch_dtype": torch.float16,
-                    "low_cpu_mem_usage": True,
-                }
-                if ANIMA_DEVICE_MAP:
-                    load_kwargs["device_map"] = ANIMA_DEVICE_MAP
-                # O checkpoint declara Qwen2Tokenizer/T5Tokenizer, porém publica
-                # somente tokenizer.json. Carregar esses dois itens pelo loader
-                # modular faz o Transformers cair nas classes lentas e procurar
-                # vocabulários inexistentes; carregue-os explicitamente como Fast.
-                network_components = [
-                    name for name in self.pipe._component_specs
-                    if name not in {"tokenizer", "t5_tokenizer"}
-                ]
-                self.pipe.load_components(names=network_components, **load_kwargs)
-                tokenizer, t5_tokenizer = self._load_anima_fast_tokenizers(repo_id)
-                self.pipe.update_components(tokenizer=tokenizer, t5_tokenizer=t5_tokenizer)
-                self._normalize_anima_guider_input_fields(self.pipe)
-                self._prepare_anima_for_t4(self.pipe, torch, cpu_offload=ANIMA_CPU_OFFLOAD)
-                self.img_pipe = None
-                self.loaded_model_id = spec["id"]
-                return
-            except Exception:
-                self._release_pipeline()
-                raise
-
         if engine != "sdxl":
             raise RuntimeError(f"Engine {engine!r} ainda não está disponível para geração.")
         model_path = self.ensure_checkpoint(spec)
@@ -921,7 +739,7 @@ class GeneratorEngine:
             self._apply_sampler(job.params.sampler)
             if job.params.mode == "img2img":
                 if self.img_pipe is None:
-                    raise RuntimeError("O engine Anima configurado suporta apenas TXT→IMG no momento.")
+                    raise RuntimeError("O pipeline img2img não está disponível para o modelo selecionado.")
                 pipeline = self.img_pipe
             else:
                 pipeline = self.pipe
@@ -957,23 +775,16 @@ class GeneratorEngine:
                     update(min(98, int((step + 1) * 100 / callback_steps)), self._vram())
                     return callback_kwargs
 
-                engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
                 options: dict[str, Any] = {
                     "prompt": job.params.prompt,
                     "negative_prompt": job.params.negative_prompt,
                     "num_inference_steps": job.params.steps,
                     "generator": generator,
                 }
-                if engine == "anima":
-                    # ModularPipeline retorna PipelineState por padrão. O bloco
-                    # oficial declara `images` como saída, então peça esse campo
-                    # explicitamente para não expor o estado interno ao backend.
-                    options["output"] = "images"
-                if engine != "anima":
-                    options.update({
-                        "guidance_scale": job.params.guidance,
-                        "callback_on_step_end": progress_callback,
-                    })
+                options.update({
+                    "guidance_scale": job.params.guidance,
+                    "callback_on_step_end": progress_callback,
+                })
                 if job.params.mode == "img2img":
                     if not job.params.source_image:
                         raise RuntimeError("O modo img2img requer uma imagem-base.")
@@ -1130,8 +941,6 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     engine = str(model_spec.get("engine") or family_profile(family).get("engine", "unsupported"))
     if engine == "unsupported":
         raise ValueError(f"O modelo selecionado pertence à família {family}, mas esse engine ainda não está configurado no ModelLab.")
-    if engine == "anima" and not ANIMA_ENGINE:
-        raise ValueError("O modelo Anima está selecionado, mas o engine Anima ainda não foi configurado. Defina ANIMA_ENGINE ou escolha um modelo SDXL compatível.")
     sampler = str(raw.get("sampler") or model_spec.get("defaults", {}).get("sampler", "euler_a")).strip().lower()
     if sampler not in SUPPORTED_SAMPLERS:
         raise ValueError("Sampler não suportado pelo perfil atual.")
@@ -1155,8 +964,6 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
         raise ValueError("Largura e altura devem ser múltiplos de 64 entre 512 e 1024.")
     if mode == "img2img" and not source_image:
         raise ValueError("Envie uma imagem-base para usar img2img.")
-    if family == "anima" and mode == "img2img":
-        raise ValueError("O modo img2img para Anima ainda depende de um workflow Anima compatível; use TXT→IMG por enquanto.")
     parsed_loras: list[LoRASelection] = []
     for candidate in raw.get("loras", [])[:MAX_LORAS]:
         try:
@@ -1324,9 +1131,9 @@ def catalog():
     include_adult = request.args.get("include_adult", "").strip().lower() in {"1", "true", "yes"}
     if include_adult and not os.environ.get("CIVITAI_TOKEN", "").strip():
         return jsonify({"error": "Defina CIVITAI_TOKEN no servidor para consultar conteúdo adulto autorizado."}), 400
-    family = request.args.get("family", "anima").strip().lower()
+    family = request.args.get("family", "pony").strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
-        family = "anima"
+        family = "pony"
     params: dict[str, Any] = {
         "limit": min(max(int(request.args.get("limit", 24)), 1), 48), "types": "LORA",
         "baseModels": civitai_base_for_family(family), "sort": request.args.get("sort", "Most Downloaded"),
@@ -1402,9 +1209,9 @@ def prompt_store():
     except (requests.RequestException, ValueError) as exc:
         return jsonify({"error": f"Não foi possível consultar a Loja de Prompts no Civitai: {str(exc)[:160]}"}), 502
 
-    family = request.args.get("family", "anima").strip().lower()
+    family = request.args.get("family", "pony").strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
-        family = "anima"
+        family = "pony"
     search = request.args.get("query", "").strip().lower()[:120]
     filters = [term.strip().lower() for term in request.args.get("filters", "").split(",") if term.strip()][:8]
     items: list[dict[str, Any]] = []

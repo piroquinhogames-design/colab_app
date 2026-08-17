@@ -116,7 +116,7 @@ function renderModels(models, selectedId = '') {
   const select = $('#model');
   if (!select) return;
   if (!state.models.length) {
-    state.models = [{id: 'nova-exanime-am', name: 'Nova EXAnime AM', family: 'anima', base: 'Anima', engine: 'anima', ready: false, cached: false, defaults: {steps: 40, guidance: 4.5, strength: .65, sampler: 'euler_a'}}];
+    state.models = [{id: 'pony-v7-base', name: 'Pony V7 Base', family: 'pony', base: 'Pony', engine: 'sdxl', ready: true, cached: false, defaults: {steps: 30, guidance: 5.5, strength: .65, sampler: 'euler_a'}}];
   }
   const options = state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)} · ${escapeHtml(String(model.family || 'sdxl').toUpperCase())}</option>`).join('');
   select.innerHTML = options;
@@ -312,7 +312,7 @@ async function loadCatalog({append = false} = {}) {
   const button = $('#search-catalog');
   button.disabled = true;
   const params = new URLSearchParams({
-    query: $('#catalog-query').value.trim(), tag: $('#catalog-tag').value.trim(), family: state.models.find((model) => model.id === $('#model').value)?.family || 'anima',
+    query: $('#catalog-query').value.trim(), tag: $('#catalog-tag').value.trim(), family: state.models.find((model) => model.id === $('#model').value)?.family || 'pony',
     sort: $('#catalog-sort').value, limit: '24', include_adult: $('#catalog-adult').checked ? 'true' : 'false',
   });
   if (append && state.catalogCursor) params.set('cursor', state.catalogCursor);
@@ -408,7 +408,7 @@ async function loadPromptStore({append = false, random = false} = {}) {
     query: $('#prompt-store-query').value.trim(), sort: $('#prompt-store-sort').value,
     limit: '24', include_adult: $('#prompt-store-adult').checked ? 'true' : 'false',
     filters: [...state.promptFilters].join(','),
-    family: state.models.find((model) => model.id === $('#model').value)?.family || 'anima',
+    family: state.models.find((model) => model.id === $('#model').value)?.family || 'pony',
   });
   if (append && state.promptStoreCursor) params.set('cursor', state.promptStoreCursor);
   try {
@@ -419,7 +419,7 @@ async function loadPromptStore({append = false, random = false} = {}) {
     renderPromptStore(incomingItems, {append});
     $('#next-prompt-store').disabled = !state.promptStoreCursor;
     const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
-    $('#prompt-store-note').textContent = `${incomingItems.length} prompts encontrados // ${String(payload.family || 'anima').toUpperCase()} // ${randomMode ? 'ordem aleatória renovada' : 'ordem por relevância'} // ${state.promptFilters.size ? `filtros: ${[...state.promptFilters].join(' + ')} // ` : ''}${payload.includes_adult ? '+18 INCLUÍDO' : 'MODO PADRÃO'} // ${authState}`;
+    $('#prompt-store-note').textContent = `${incomingItems.length} prompts encontrados // ${String(payload.family || 'pony').toUpperCase()} // ${randomMode ? 'ordem aleatória renovada' : 'ordem por relevância'} // ${state.promptFilters.size ? `filtros: ${[...state.promptFilters].join(' + ')} // ` : ''}${payload.includes_adult ? '+18 INCLUÍDO' : 'MODO PADRÃO'} // ${authState}`;
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
 }
@@ -656,7 +656,7 @@ function restoreLastSettings(settings) {
 }
 
 function activeModel() {
-  return state.models.find((model) => model.id === $('#model')?.value) || state.models[0] || {family: 'anima'};
+  return state.models.find((model) => model.id === $('#model')?.value) || state.models[0] || {family: 'pony'};
 }
 
 function openModelSettings() {
@@ -665,7 +665,7 @@ function openModelSettings() {
 }
 
 function openModelStore() {
-  const family = String(activeModel().family || 'anima');
+  const family = String(activeModel().family || 'pony');
   const familySelect = $('#model-store-family');
   if (familySelect && [...familySelect.options].some((option) => option.value === family)) familySelect.value = family;
   state.modelStoreCursor = null;

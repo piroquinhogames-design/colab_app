@@ -16,4 +16,4 @@ Não existe fundamento para prometer um modelo “perfeito” para anatomia. A i
 
 ## Decisão
 
-Nota histórica superseded: a implementação posterior substituiu o padrão anterior por **Nova EXAnime AM / Anima**, manteve o manifesto configurável via `MODELS_CONFIG`/`MODEL_URL`/`MODEL_PATH` e adicionou lojas dependentes da família. Nova Anime XL permanece apenas como referência de pesquisa, não como padrão ativo.
+A implementação atual usa **Pony V7 Base**, mantém o manifesto configurável via `MODELS_CONFIG`/`MODEL_URL`/`MODEL_PATH` e oferece lojas dependentes da família. Nova Anime XL permanece apenas como referência de pesquisa, não como padrão ativo.
