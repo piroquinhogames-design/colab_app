@@ -46,6 +46,8 @@ def main() -> None:
     requirements = (package_root / "requirements.txt").read_text(encoding="utf-8")
     if "peft==0.17.0" not in requirements:
         raise AssertionError("O pacote deve fixar a versão PEFT compatível com carregamento de LoRA")
+    if "accelerate==1.3.0" not in requirements:
+        raise AssertionError("Accelerate deve ser fixado para suportar offload no Colab")
     if "huggingface-hub>=0.34.0,<1.0" not in requirements:
         raise AssertionError("O Hub deve permanecer na série 0.x compatível com Transformers")
     if "pycryptodome==3.21.0" not in requirements:
@@ -70,15 +72,22 @@ def main() -> None:
     if "from Crypto.Cipher import AES" not in launcher_source:
         raise AssertionError("O runtime deve validar o módulo Crypto exigido pelo cliente MEGA")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
-    if ".enable_vae_slicing()" in server_source or ".vae.enable_slicing()" not in server_source:
-        raise AssertionError("O servidor deve usar a API VAE atual, não o atalho obsoleto do Diffusers")
+    if ".enable_vae_slicing()" in server_source or "enable_slicing()" not in server_source or "enable_tiling()" not in server_source:
+        raise AssertionError("O servidor deve usar as APIs atuais de slicing e tiling do VAE")
     if (
         "from diffusers import ModularPipeline" not in server_source
-        or "self.pipe.load_components(names=network_components, torch_dtype=torch.float16)" not in server_source
+        or "self.pipe.load_components(names=network_components, **load_kwargs)" not in server_source
+        or '"torch_dtype": torch.float16' not in server_source
         or "_load_anima_fast_tokenizers" not in server_source
         or "T5TokenizerFast" not in server_source
         or "_prepare_anima_for_t4" not in server_source
-        or '.half().to("cuda")' not in server_source
+        or "low_cpu_mem_usage" not in server_source
+        or "ANIMA_CPU_OFFLOAD" not in server_source
+        or "enable_tiling" not in server_source
+        or "_extract_first_image" not in server_source
+        or 'options["output"] = "images"' not in server_source
+        or "component.half()" not in server_source
+        or "component.to(execution_device)" not in server_source
         or "load_components(dtype=torch.float16)" in server_source
     ):
         raise AssertionError("Anima deve carregar redes em FP16 e tokenizers Fast antes de mover para CUDA")

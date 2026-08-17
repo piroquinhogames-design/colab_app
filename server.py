@@ -64,6 +64,8 @@ MODEL_PROFILE_CACHE = ROOT / "model_profiles.json"
 # Anima tem arquitetura própria; o engine é marcado explicitamente para impedir que
 # um checkpoint Anima seja tratado como SDXL por acidente.
 ANIMA_ENGINE = os.environ.get("ANIMA_ENGINE", "").strip()
+ANIMA_DEVICE_MAP = os.environ.get("ANIMA_DEVICE_MAP", "").strip()
+ANIMA_CPU_OFFLOAD = os.environ.get("ANIMA_CPU_OFFLOAD", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 MODEL_FAMILY_PROFILES: dict[str, dict[str, Any]] = {
     "anima": {
@@ -608,24 +610,72 @@ class GeneratorEngine:
 
     @staticmethod
     def _configure_memory_savers(pipeline: Any) -> None:
-        """Configura economia de VRAM sem usar os atalhos obsoletos do Diffusers."""
-        pipeline.enable_model_cpu_offload()
-        if getattr(pipeline, "vae", None) is not None:
-            pipeline.vae.enable_slicing()
+        """Configura economia de VRAM para pipelines DiffusionPipeline clássicas."""
+        if hasattr(pipeline, "enable_attention_slicing"):
+            pipeline.enable_attention_slicing(slice_size="auto")
+        if hasattr(pipeline, "enable_model_cpu_offload"):
+            pipeline.enable_model_cpu_offload()
+        vae = getattr(pipeline, "vae", None)
+        if vae is not None:
+            if hasattr(vae, "enable_tiling"):
+                vae.enable_tiling()
+            if hasattr(vae, "enable_slicing"):
+                vae.enable_slicing()
 
     @staticmethod
-    def _prepare_anima_for_t4(pipeline: Any, torch_module: Any) -> None:
-        """Move os módulos do Anima para CUDA em FP16 após o carregamento.
+    def _prepare_anima_for_t4(pipeline: Any, torch_module: Any, *, cpu_offload: bool = True) -> None:
+        """Prepara o Anima em FP16 sem materializar tudo na VRAM de uma vez.
 
-        O `load_components` do Diffusers 0.39 aceita `torch_dtype` e encaminha
-        esse argumento apenas aos componentes de rede. A conversão explícita
-        continua sendo feita aqui para garantir que todos os módulos do Anima
-        estejam efetivamente em CUDA antes da primeira inferência.
+        O checkpoint Anima usa `ModularPipeline`, que não herda os atalhos de
+        `DiffusionPipeline` como `enable_model_cpu_offload`. Quando Accelerate
+        está disponível, cada módulo de rede recebe um hook de CPU offload e só
+        ocupa a T4 durante o próprio forward. Sem offload, o fallback move os
+        módulos diretamente para CUDA.
         """
         components = getattr(pipeline, "components", {})
+        execution_device = torch_module.device("cuda")
+        if cpu_offload:
+            try:
+                from accelerate import cpu_offload
+            except ImportError as error:
+                raise RuntimeError(
+                    "O offload do Anima requer Accelerate. Reexecute o inicializador para instalar "
+                    "accelerate e reinicie o runtime do Colab."
+                ) from error
         for component in components.values():
-            if isinstance(component, torch_module.nn.Module):
-                component.half().to("cuda")
+            if not isinstance(component, torch_module.nn.Module):
+                continue
+            component.half()
+            if cpu_offload:
+                cpu_offload(component, execution_device=execution_device)
+            else:
+                component.to(execution_device)
+
+        vae = components.get("vae") if isinstance(components, dict) else getattr(pipeline, "vae", None)
+        if vae is not None:
+            if hasattr(vae, "enable_tiling"):
+                vae.enable_tiling()
+            if hasattr(vae, "enable_slicing"):
+                vae.enable_slicing()
+
+    @staticmethod
+    def _extract_first_image(result: Any) -> Image.Image:
+        """Normaliza saídas da ModularPipeline e da DiffusionPipeline clássica."""
+        if isinstance(result, dict):
+            images = result.get("images", result.get("image"))
+        else:
+            images = getattr(result, "images", None)
+            if images is None and hasattr(result, "get"):
+                images = result.get("images", result.get("image"))
+            if images is None:
+                images = result
+        if isinstance(images, (list, tuple)):
+            if not images:
+                raise RuntimeError("A pipeline terminou sem produzir imagens.")
+            images = images[0]
+        if not isinstance(images, Image.Image):
+            raise RuntimeError(f"A pipeline retornou uma saída inesperada: {type(images).__name__}.")
+        return images
 
     @staticmethod
     def _load_anima_fast_tokenizers(repo_id: str) -> tuple[Any, Any]:
@@ -694,18 +744,27 @@ class GeneratorEngine:
                 # Sem ele, o Anima é materializado em FP32 e pode estourar a VRAM
                 # da T4 antes que a conversão para FP16 aconteça.
                 self.pipe = ModularPipeline.from_pretrained(repo_id)
+                # `low_cpu_mem_usage` evita a cópia inicial completa em FP32.
+                # `device_map` é opcional porque aplicar "auto" separadamente
+                # a cada componente pode superestimar a VRAM disponível na T4.
+                load_kwargs: dict[str, Any] = {
+                    "torch_dtype": torch.float16,
+                    "low_cpu_mem_usage": True,
+                }
+                if ANIMA_DEVICE_MAP:
+                    load_kwargs["device_map"] = ANIMA_DEVICE_MAP
                 # O checkpoint declara Qwen2Tokenizer/T5Tokenizer, porém publica
                 # somente tokenizer.json. Carregar esses dois itens pelo loader
                 # modular faz o Transformers cair nas classes lentas e procurar
-                # vocabularies inexistentes; carregue-os explicitamente como Fast.
+                # vocabulários inexistentes; carregue-os explicitamente como Fast.
                 network_components = [
                     name for name in self.pipe._component_specs
                     if name not in {"tokenizer", "t5_tokenizer"}
                 ]
-                self.pipe.load_components(names=network_components, torch_dtype=torch.float16)
+                self.pipe.load_components(names=network_components, **load_kwargs)
                 tokenizer, t5_tokenizer = self._load_anima_fast_tokenizers(repo_id)
                 self.pipe.update_components(tokenizer=tokenizer, t5_tokenizer=t5_tokenizer)
-                self._prepare_anima_for_t4(self.pipe, torch)
+                self._prepare_anima_for_t4(self.pipe, torch, cpu_offload=ANIMA_CPU_OFFLOAD)
                 self.img_pipe = None
                 self.loaded_model_id = spec["id"]
                 return
@@ -858,6 +917,11 @@ class GeneratorEngine:
                     "num_inference_steps": job.params.steps,
                     "generator": generator,
                 }
+                if engine == "anima":
+                    # ModularPipeline retorna PipelineState por padrão. O bloco
+                    # oficial declara `images` como saída, então peça esse campo
+                    # explicitamente para não expor o estado interno ao backend.
+                    options["output"] = "images"
                 if engine != "anima":
                     options.update({
                         "guidance_scale": job.params.guidance,
@@ -869,10 +933,10 @@ class GeneratorEngine:
                     with Image.open(job.params.source_image) as source:
                         options["image"] = source.convert("RGB")
                         options["strength"] = job.params.strength
-                        result = pipeline(**options).images[0]
+                        result = self._extract_first_image(pipeline(**options))
                 else:
                     options.update({"width": job.params.width, "height": job.params.height})
-                    result = pipeline(**options).images[0]
+                    result = self._extract_first_image(pipeline(**options))
 
                 output = OUTPUTS / f"{job.id}.png"
                 result.save(output, format="PNG")
