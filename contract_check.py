@@ -75,8 +75,8 @@ def main() -> None:
     backend_source = (package_root / "comfy_backend.py").read_text(encoding="utf-8")
     if "ComfyBackend" not in server_source or not (package_root / "comfy_memory_node.py").exists():
         raise AssertionError("O servidor deve usar o backend headless do ComfyUI e o custom node de memória")
-    if "--gpu-only" not in backend_source or "--highvram" not in backend_source:
-        raise AssertionError("O backend deve manter modelo e encoders na GPU")
+    if "--gpu-only" not in backend_source or "--highvram" in backend_source:
+        raise AssertionError("O backend deve usar gpu-only sem combinar flags mutuamente exclusivas")
     if "--disable-auto-launch" not in backend_source or "/prompt" not in backend_source:
         raise AssertionError("O ComfyUI deve operar sem frontend e aceitar workflows pela API")
     if "def status(self)" not in backend_source or "/api/comfy-health" not in server_source:

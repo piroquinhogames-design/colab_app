@@ -95,9 +95,10 @@ class ComfyBackend:
             # cast interno para FP16 quando esta opção está ativa.
             "--force-fp16",
             "--fp16-intermediates",
-            # Não permitir offload de encoders/modelo para a RAM entre jobs.
+            # O parser do ComfyUI trata gpu-only/highvram como opções
+            # mutuamente exclusivas. gpu-only é a política desejada: não
+            # permitir offload de encoders/modelo para a RAM entre jobs.
             "--gpu-only",
-            "--highvram",
             # Evita manter resultados intermediários de nodes na RAM. O cache
             # interno de modelos do ComfyUI continua separado e residente.
             "--cache-none",

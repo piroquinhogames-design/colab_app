@@ -49,8 +49,9 @@ assert '9' not in fallback
 assert fallback['10']['inputs']['images'] == ['8', 0]
 backend.memory_node_available = True
 command = backend._command()
-for flag in ('--disable-auto-launch', '--force-fp16', '--fp16-intermediates', '--gpu-only', '--highvram', '--cache-none'):
+for flag in ('--disable-auto-launch', '--force-fp16', '--fp16-intermediates', '--gpu-only', '--cache-none'):
     assert flag in command, flag
 assert '--lowvram' not in command
+assert '--highvram' not in command
 assert '--cpu-vae' not in command
 print('HEADLESS_WORKFLOW_OK')
