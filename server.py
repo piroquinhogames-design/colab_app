@@ -71,6 +71,8 @@ MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "ModelLabStudio")
 CIVITAI_BASE = "https://civitai.com/api/v1"
 LAST_SETTINGS_NAME = "last_settings.json"
 MODEL_PROFILE_CACHE = ROOT / "model_profiles.json"
+PONY_V7_REPO = os.environ.get("PONY_V7_REPO", "purplesmartai/pony-v7-base")
+PONY_V7_PATH = Path(os.environ.get("PONY_V7_PATH", HF_HUB_CACHE / "models--purplesmartai--pony-v7-base"))
 
 # A família controla tanto a busca de LoRAs quanto os defaults enviados ao motor.
 
@@ -79,34 +81,47 @@ MODEL_FAMILY_PROFILES: dict[str, dict[str, Any]] = {
         "base": "Illustrious", "engine": "sdxl", "lora_base": "Illustrious",
         "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
         "notes": "SDXL derivado de Illustrious; compatível com a maioria das LoRAs Illustrious quando a variante coincide.",
+        "supports_img2img": True, "supports_lora": True,
     },
     "pony": {
         "base": "Pony", "engine": "sdxl", "lora_base": "Pony",
         "defaults": {"steps": 30, "guidance": 5.5, "strength": 0.65, "sampler": "euler_a"},
         "notes": "Prefect Pony XL V6 é um checkpoint SDXL fp16; use LoRAs Pony/SDXL compatíveis.",
+        "supports_img2img": True, "supports_lora": True,
+    },
+    "pony-v7": {
+        "base": "AuraFlow", "engine": "auraflow", "lora_base": "AuraFlow",
+        "defaults": {"steps": 30, "guidance": 3.5, "strength": 0.65, "sampler": "flow_euler"},
+        "notes": "Pony V7 usa AuraFlow; TXT→IMG está integrado. IMG→IMG e LoRAs ficam bloqueados até validação específica.",
+        "supports_img2img": False, "supports_lora": False,
     },
     "sdxl": {
         "base": "SDXL 1.0", "engine": "sdxl", "lora_base": "SDXL 1.0",
         "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
         "notes": "SDXL convencional.",
+        "supports_img2img": True, "supports_lora": True,
     },
     "flux": {
         "base": "Flux", "engine": "unsupported", "lora_base": "Flux",
         "defaults": {"steps": 28, "guidance": 3.5, "strength": 0.65, "sampler": "euler_a"},
         "notes": "Catalogável, mas exige um engine Flux separado antes de gerar.",
+        "supports_img2img": False, "supports_lora": False,
     },
     "sd3": {
         "base": "SD 3", "engine": "unsupported", "lora_base": "SD 3",
         "defaults": {"steps": 28, "guidance": 5.0, "strength": 0.65, "sampler": "euler_a"},
         "notes": "Catalogável, mas exige um engine SD3 separado antes de gerar.",
+        "supports_img2img": False, "supports_lora": False,
     },
 }
 SUPPORTED_MODEL_FAMILIES = set(MODEL_FAMILY_PROFILES)
-SUPPORTED_SAMPLERS = {"euler_a", "euler", "dpmpp_2m", "dpmpp_2m_sde_gpu"}
+SUPPORTED_SAMPLERS = {"euler_a", "euler", "dpmpp_2m", "dpmpp_2m_sde_gpu", "flow_euler"}
 
 
 def normalize_model_family(base_model: str | None) -> str:
     value = re.sub(r"[^a-z0-9]+", " ", str(base_model or "").lower()).strip()
+    if "pony v7" in value or "pony-v7" in value or "auraflow" in value:
+        return "pony-v7"
     if "pony" in value:
         return "pony"
     if "illustrious" in value or "noobai" in value or "noob ai" in value:
@@ -142,24 +157,36 @@ def version_matches_family(version: dict[str, Any], family: str | None) -> bool:
 
 def _load_model_specs() -> dict[str, dict[str, Any]]:
     """Carrega checkpoints com perfil de família e defaults adaptativos."""
-    default_family = os.environ.get("MODEL_FAMILY", "pony").strip().lower()
+    default_family = os.environ.get("MODEL_FAMILY", "").strip().lower() or ("pony-v7" if DEFAULT_MODEL_ID == "pony-v7-base" else "pony")
     base_profile = family_profile(default_family)
     default = {
         "id": DEFAULT_MODEL_ID,
-        "name": "Prefect Pony XL V6" if DEFAULT_MODEL_ID == "prefect-pony-xl-v6" else DEFAULT_MODEL_ID,
+        "name": "Pony V7 Base" if DEFAULT_MODEL_ID == "pony-v7-base" else ("Prefect Pony XL V6" if DEFAULT_MODEL_ID == "prefect-pony-xl-v6" else DEFAULT_MODEL_ID),
         "url": MODEL_URL,
-        "repo": MODEL_REPO,
-        "path": str(MODEL_PATH),
+        "repo": PONY_V7_REPO if base_profile["engine"] == "auraflow" else MODEL_REPO,
+        "path": str(PONY_V7_PATH if base_profile["engine"] == "auraflow" else MODEL_PATH),
         "family": default_family,
         "base": base_profile["base"],
         "engine": base_profile["engine"],
         "lora_base": base_profile["lora_base"],
         "defaults": dict(base_profile["defaults"]),
         "notes": base_profile["notes"],
+        "supports_img2img": base_profile.get("supports_img2img", False),
+        "supports_lora": base_profile.get("supports_lora", False),
         "civitai_model_id": 439889 if DEFAULT_MODEL_ID == "prefect-pony-xl-v6" else None,
         "version_id": 2114187 if DEFAULT_MODEL_ID == "prefect-pony-xl-v6" else None,
     }
     specs: dict[str, dict[str, Any]] = {DEFAULT_MODEL_ID: default}
+    if DEFAULT_MODEL_ID != "pony-v7-base":
+        v7_profile = family_profile("pony-v7")
+        specs["pony-v7-base"] = {
+            "id": "pony-v7-base", "name": "Pony V7 Base", "repo": PONY_V7_REPO,
+            "path": str(PONY_V7_PATH), "family": "pony-v7", "base": v7_profile["base"],
+            "engine": v7_profile["engine"], "lora_base": v7_profile["lora_base"],
+            "defaults": dict(v7_profile["defaults"]), "notes": v7_profile["notes"],
+            "supports_img2img": v7_profile["supports_img2img"], "supports_lora": v7_profile["supports_lora"],
+            "civitai_model_id": 1901521, "version_id": 2152373,
+        }
     raw = os.environ.get("MODELS_CONFIG", "").strip()
     if not raw:
         return specs
@@ -184,12 +211,16 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
             profile["id"] = model_id
             profile["name"] = str(candidate.get("name") or model_id)[:120]
             profile["family"] = candidate_family
-            profile["path"] = str(candidate.get("path") or MODELS / f"{model_id}.safetensors")
+            profile["engine"] = str(profile.get("engine") or inherited["engine"])
+            profile["repo"] = str(profile.get("repo") or (PONY_V7_REPO if profile["engine"] == "auraflow" else ""))
+            profile["path"] = str(candidate.get("path") or (HF_HUB_CACHE / f"models--{profile['repo'].replace('/', '--')}" if profile["engine"] == "auraflow" else MODELS / f"{model_id}.safetensors"))
             profile["defaults"] = {**inherited["defaults"], **(candidate.get("defaults") or {})}
+            profile["supports_img2img"] = bool(candidate.get("supports_img2img", inherited.get("supports_img2img", False)))
+            profile["supports_lora"] = bool(candidate.get("supports_lora", inherited.get("supports_lora", False)))
             if candidate_family == "pony" and "engine" not in candidate:
                 # Checkpoints Pony vindos do Civitai usam o pipeline SDXL.
                 profile["engine"] = "sdxl"
-                profile.pop("repo", None)
+                profile["repo"] = ""
             specs[model_id] = profile
     except (TypeError, ValueError, json.JSONDecodeError):
         pass
@@ -210,12 +241,16 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
             profile["id"] = model_id
             profile["name"] = str(candidate.get("name") or model_id)[:120]
             profile["family"] = candidate_family
-            profile["path"] = str(candidate.get("path") or MODELS / f"{model_id}.safetensors")
+            profile["engine"] = str(profile.get("engine") or inherited["engine"])
+            profile["repo"] = str(profile.get("repo") or (PONY_V7_REPO if profile["engine"] == "auraflow" else ""))
+            profile["path"] = str(candidate.get("path") or (HF_HUB_CACHE / f"models--{profile['repo'].replace('/', '--')}" if profile["engine"] == "auraflow" else MODELS / f"{model_id}.safetensors"))
             profile["defaults"] = {**inherited["defaults"], **(candidate.get("defaults") or {})}
+            profile["supports_img2img"] = bool(candidate.get("supports_img2img", inherited.get("supports_img2img", False)))
+            profile["supports_lora"] = bool(candidate.get("supports_lora", inherited.get("supports_lora", False)))
             if candidate_family == "pony" and "engine" not in candidate:
                 # Checkpoints Pony vindos do Civitai usam o pipeline SDXL.
                 profile["engine"] = "sdxl"
-                profile.pop("repo", None)
+                profile["repo"] = ""
             specs[model_id] = profile
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         pass
@@ -232,14 +267,17 @@ def get_model_spec(model_id: str | None = None) -> dict[str, Any]:
 
 def public_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
     family = str(spec.get("family", "sdxl"))
-    engine = str(spec.get("engine") or family_profile(family).get("engine", "unsupported"))
-    ready = engine == "sdxl"
+    profile = family_profile(family)
+    engine = str(spec.get("engine") or profile.get("engine", "unsupported"))
+    ready = engine in {"sdxl", "auraflow"}
     return {
         "id": spec["id"], "name": spec.get("name", spec["id"]),
-        "family": family, "base": spec.get("base", family_profile(family)["base"]),
+        "family": family, "base": spec.get("base", profile["base"]),
         "lora_base": spec.get("lora_base", civitai_base_for_family(family)),
         "engine": engine, "ready": ready, "cached": Path(spec["path"]).exists(),
-        "defaults": spec.get("defaults", family_profile(family)["defaults"]),
+        "supports_img2img": bool(spec.get("supports_img2img", profile.get("supports_img2img", False))),
+        "supports_lora": bool(spec.get("supports_lora", profile.get("supports_lora", False))),
+        "defaults": spec.get("defaults", profile["defaults"]),
         "notes": spec.get("notes", ""), "repo": spec.get("repo"),
         "civitai_model_id": spec.get("civitai_model_id"),
         "version_id": spec.get("version_id"),
@@ -634,7 +672,7 @@ class GeneratorEngine:
         """Configura economia de VRAM para pipelines DiffusionPipeline clássicas."""
         if hasattr(pipeline, "enable_attention_slicing"):
             pipeline.enable_attention_slicing(slice_size="auto")
-        if hasattr(pipeline, "enable_model_cpu_offload"):
+        if hasattr(pipeline, "enable_model_cpu_offload") and not getattr(pipeline, "hf_device_map", None):
             pipeline.enable_model_cpu_offload()
         vae = getattr(pipeline, "vae", None)
         if vae is not None:
@@ -665,17 +703,39 @@ class GeneratorEngine:
             raise RuntimeError("Nenhuma GPU CUDA foi detectada. Ative uma sessão T4 no Colab e reinicie o servidor.")
         engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
 
-        if engine != "sdxl":
-            raise RuntimeError(f"Engine {engine!r} ainda não está disponível para geração.")
-        model_path = self.ensure_checkpoint(spec)
-        from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
         try:
-            self.pipe = StableDiffusionXLPipeline.from_single_file(
-                str(model_path), torch_dtype=torch.float16, use_safetensors=True
-            )
-            self._configure_memory_savers(self.pipe)
-            self.img_pipe = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
-            self._configure_memory_savers(self.img_pipe)
+            if engine == "auraflow":
+                from diffusers import DiffusionPipeline
+
+                repo = str(spec.get("repo") or PONY_V7_REPO).strip()
+                if not repo:
+                    raise RuntimeError("O perfil Pony V7 não possui um repositório Hugging Face configurado.")
+                local_path = Path(spec.get("path", "")).expanduser()
+                source = str(local_path) if (local_path / "model_index.json").exists() else repo
+                load_options: dict[str, Any] = {
+                    "torch_dtype": torch.float16,
+                    "use_safetensors": True,
+                }
+                if source == repo:
+                    load_options["cache_dir"] = str(HF_HUB_CACHE)
+                device_map = os.environ.get("PONY_V7_DEVICE_MAP", "").strip()
+                if device_map:
+                    load_options["device_map"] = device_map
+                self.pipe = DiffusionPipeline.from_pretrained(source, **load_options)
+                self.img_pipe = None
+                self._configure_memory_savers(self.pipe)
+            elif engine == "sdxl":
+                model_path = self.ensure_checkpoint(spec)
+                from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
+
+                self.pipe = StableDiffusionXLPipeline.from_single_file(
+                    str(model_path), torch_dtype=torch.float16, use_safetensors=True
+                )
+                self._configure_memory_savers(self.pipe)
+                self.img_pipe = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
+                self._configure_memory_savers(self.img_pipe)
+            else:
+                raise RuntimeError(f"Engine {engine!r} ainda não está disponível para geração.")
             self.loaded_model_id = spec["id"]
         except Exception:
             self._release_pipeline()
@@ -683,7 +743,17 @@ class GeneratorEngine:
 
     def _apply_sampler(self, sampler: str) -> None:
         """Troca o scheduler somente quando a biblioteca instalada suportar a variante."""
-        if sampler not in SUPPORTED_SAMPLERS or self.pipe is None or self.img_pipe is None:
+        if sampler not in SUPPORTED_SAMPLERS or self.pipe is None:
+            return
+        if sampler == "flow_euler":
+            try:
+                from diffusers import FlowMatchEulerDiscreteScheduler
+                self.pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(self.pipe.scheduler.config)
+            except Exception:
+                # O snapshot AuraFlow normalmente já traz o scheduler correto.
+                return
+            return
+        if self.img_pipe is None:
             return
         try:
             from diffusers import DPMSolverMultistepScheduler, EulerAncestralDiscreteScheduler
@@ -775,6 +845,10 @@ class GeneratorEngine:
 
         with self.load_lock:
             spec = get_model_spec(job.params.model_id)
+            if job.params.mode == "img2img" and not spec.get("supports_img2img", family_profile(spec.get("family")).get("supports_img2img", False)):
+                raise RuntimeError("O perfil selecionado ainda não oferece IMG→IMG.")
+            if job.params.loras and not spec.get("supports_lora", family_profile(spec.get("family")).get("supports_lora", False)):
+                raise RuntimeError("O perfil selecionado ainda não oferece LoRAs compatíveis.")
             self._load_pipeline(spec)
             assert self.pipe is not None
             self._apply_sampler(job.params.sampler)
@@ -985,6 +1059,14 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     sampler = str(raw.get("sampler") or model_spec.get("defaults", {}).get("sampler", "euler_a")).strip().lower()
     if sampler not in SUPPORTED_SAMPLERS:
         raise ValueError("Sampler não suportado pelo perfil atual.")
+    supports_img2img = bool(model_spec.get("supports_img2img", family_profile(family).get("supports_img2img", False)))
+    supports_lora = bool(model_spec.get("supports_lora", family_profile(family).get("supports_lora", False)))
+    if mode == "img2img" and not supports_img2img:
+        raise ValueError("O perfil selecionado ainda não oferece IMG→IMG.")
+    if raw.get("loras") and not supports_lora:
+        raise ValueError("O perfil selecionado ainda não oferece LoRAs compatíveis.")
+    if engine == "auraflow" and sampler != "flow_euler":
+        raise ValueError("O Pony V7 usa o scheduler FlowMatch; selecione Flow Euler.")
     prompt = str(raw.get("prompt", "")).strip()
     if not prompt or len(prompt) > 4000:
         raise ValueError("Informe um prompt entre 1 e 4000 caracteres.")
@@ -1001,7 +1083,7 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
         raise ValueError("Há um parâmetro numérico inválido.") from exc
     if not 10 <= steps <= 60 or not 1 <= guidance <= 15 or not 0.05 <= strength <= 1:
         raise ValueError("Steps, guidance ou strength estão fora dos limites aceitos.")
-    size_min, size_max = 512, 1024
+    size_min, size_max = (768, 1024) if engine == "auraflow" else (512, 1024)
     if width not in range(size_min, size_max + 1, 64) or height not in range(size_min, size_max + 1, 64):
         raise ValueError(f"Largura e altura devem ser múltiplos de 64 entre {size_min} e {size_max}.")
     if mode == "img2img" and not source_image:
@@ -1150,12 +1232,17 @@ def model_profile():
     family = normalize_model_family(payload.get("family") or payload.get("base_model"))
     profile = family_profile(family)
     model_id = re.sub(r"[^a-z0-9._-]+", "-", f"civitai-{civitai_model_id}-{version_id}".lower()).strip("-")
+    engine = str(profile.get("engine", "unsupported"))
+    is_aura = engine == "auraflow"
+    repo = str(payload.get("repo") or (PONY_V7_REPO if is_aura else ""))
     spec = {
         "id": model_id, "name": str(payload.get("name") or model_id)[:120],
-        "url": f"https://civitai.com/api/download/models/{version_id}",
-        "path": str(MODELS / f"{model_id}.safetensors"), "family": family,
-        "base": str(payload.get("base_model") or profile["base"]),
-        "engine": "sdxl",
+        "url": "" if is_aura else f"https://civitai.com/api/download/models/{version_id}",
+        "repo": repo,
+        "path": str(payload.get("path") or (HF_HUB_CACHE / f"models--{repo.replace('/', '--')}" if is_aura else MODELS / f"{model_id}.safetensors")),
+        "family": family, "base": str(payload.get("base_model") or profile["base"]),
+        "engine": engine,
+        "supports_img2img": profile.get("supports_img2img", False), "supports_lora": profile.get("supports_lora", False),
         "lora_base": profile["lora_base"], "defaults": {**profile["defaults"], **(payload.get("defaults") or {})},
         "notes": profile["notes"], "civitai_model_id": civitai_model_id, "version_id": version_id,
     }

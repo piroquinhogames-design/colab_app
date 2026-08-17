@@ -12,7 +12,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Prefect Pony XL V6 e o pipeline SDXL single-file são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar o catálogo Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
+O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Prefect Pony XL V6 e o pipeline SDXL single-file são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. Para testar o Pony V7, defina `MODEL_ID=pony-v7-base` antes de executar o inicializador; ele usará o snapshot AuraFlow oficial no cache Hugging Face. O token é utilizado apenas pelo processo do servidor para consultar o catálogo Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
 A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Diffusers 0.39.0**, **Accelerate 1.3.0+**, **Hugging Face Hub 0.34.0–0.x**, **hf-xet 1.1.0+**, **PEFT 0.17.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 
@@ -30,6 +30,17 @@ O perfil inicial é **Prefect Pony XL V6**, obtido do modelo Civitai `439889`, v
 
 O endpoint do checkpoint é `https://civitai.com/api/download/models/2114187?fileId=2008663`. O backend baixa o arquivo com retomada HTTP (`Range`) e preserva um `.part` quando a célula é interrompida. O arquivo completo fica em `STUDIO_ROOT/models/prefect_pony_v6.fp16.safetensors`; uma vez presente, o carregador não repete a transferência. O cache Hugging Face continua disponível para componentes auxiliares de outros perfis, mas o Prefect Pony XL V6 não exige um repositório Diffusers separado.
 
+## Modelo opcional: Pony V7 Base
+
+O perfil `pony-v7-base` usa o repositório Hugging Face `purplesmartai/pony-v7-base`, carregado como `DiffusionPipeline` AuraFlow. Ele fica separado do checkpoint V6, portanto a troca não altera o fluxo SDXL existente. A primeira geração baixa aproximadamente 19 GB de pesos em shards para `HF_HUB_CACHE`; o download pode exigir mais espaço temporário do que uma sessão T4 normalmente oferece.
+
+A integração inicial do V7 é deliberadamente conservadora: oferece apenas TXT→IMG em 768–1024 px, usa `Flow Euler`, aplica offload de memória quando possível e mantém IMG→IMG e LoRAs desativados até que adaptadores específicos AuraFlow sejam validados. Para ativar:
+
+```bash
+export MODEL_ID=pony-v7-base
+!python /content/colab_app/launch_colab.py
+```
+
 ## Configurações, famílias e presets
 
 Os modelos ficam ocultos no formulário principal e são administrados pela aba **CONFIGURAÇÕES**. O sistema expõe perfis com família, engine, base, disponibilidade, cache local, defaults e notas. Ao trocar o modelo, steps, guidance, strength e sampler são atualizados automaticamente; o identificador escolhido acompanha o job.
@@ -38,11 +49,12 @@ Os modelos ficam ocultos no formulário principal e são administrados pela aba 
 |---|---|---|---|
 | `sdxl-illustrious` | `sdxl` | 28 steps, CFG 6.5, Euler a | Illustrious |
 | `pony` | `sdxl` | 30 steps, CFG 5.5, Euler a | Pony |
+| `pony-v7` | `auraflow` | 30 steps, CFG 3.5, Flow Euler | Desativada inicialmente |
 | `sdxl` | `sdxl` | 28 steps, CFG 6.5, Euler a | SDXL 1.0 |
 | `flux` | engine separado | 28 steps, CFG 3.5 | Flux |
 | `sd3` | engine separado | 28 steps, CFG 5.0 | SD 3 |
 
-Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los sem engines próprios. Isso evita incompatibilidades de arquitetura. O pipeline Pony/SDXL permite TXT→IMG e IMG→IMG; as LoRAs precisam estar em formato compatível com Pony/SDXL.
+Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los sem engines próprios. Isso evita incompatibilidades de arquitetura. O pipeline Pony/SDXL permite TXT→IMG, IMG→IMG e LoRAs compatíveis. O Pony V7/AuraFlow, por enquanto, fica limitado a TXT→IMG e não oferece LoRAs até existir um adaptador validado para essa arquitetura.
 
 ## Loja de modelos Civitai
 
@@ -77,7 +89,7 @@ export MODELS_CONFIG='[
 ]'
 ```
 
-Os samplers aceitos pelo contrato atual são `euler_a`, `euler`, `dpmpp_2m` e `dpmpp_2m_sde_gpu`. O servidor valida a família e o engine antes de enfileirar; quando o engine não está disponível, retorna uma mensagem explícita.
+Os samplers aceitos pelo contrato atual são `flow_euler`, `euler_a`, `euler`, `dpmpp_2m` e `dpmpp_2m_sde_gpu`. O V7 exige `flow_euler`; o servidor valida a família, o engine e as capacidades do perfil antes de enfileirar. Quando uma operação ainda não é compatível, retorna uma mensagem explícita.
 
 ## Arquivo persistente e exclusão
 
@@ -96,8 +108,11 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 | `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/2114187?fileId=2008663` |
 | `MODEL_REPO` | Repositório Diffusers auxiliar, não usado pelo perfil padrão | vazio |
 | `MODEL_PATH` | Caminho do checkpoint Civitai | `/content/modellab-studio/models/prefect_pony_v6.fp16.safetensors` |
-| `MODEL_FAMILY` | Família declarada do perfil padrão | `pony` |
-| `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
+| `MODEL_FAMILY` | Família declarada do perfil padrão | `pony` ou `pony-v7` para o V7 |
+| `PONY_V7_REPO` | Repositório Hugging Face do Pony V7 | `purplesmartai/pony-v7-base` |
+| `PONY_V7_PATH` | Caminho opcional do snapshot V7 já baixado | `HF_HUB_CACHE/models--purplesmartai--pony-v7-base` |
+| `PONY_V7_DEVICE_MAP` | Mapa opcional de distribuição de módulos | vazio; usa offload automático |
+| `MODELS_CONFIG` | JSON com perfis adicionais | vazio; V6 e V7 embutidos |
 | `STUDIO_ROOT` | Diretório temporário da sessão e cache padrão do Hub | `/content/modellab-studio` |
 | `HF_HOME` | Raiz opcional para cache persistente do Hugging Face | `STUDIO_ROOT/huggingface-cache` |
 | `HF_HUB_CACHE` | Cache de snapshots do Hub | `HF_HOME/hub` |
@@ -106,4 +121,4 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 
 ## Limites operacionais
 
-O túnel é temporário e a URL é renovada em cada sessão. Enquanto a sessão T4 estiver desligada, o painel e a geração não estarão acessíveis; os itens já sincronizados continuam na conta MEGA. O MEGA é usado para o arquivo persistente, enquanto o Colab mantém apenas o cache temporário de checkpoints, LoRAs e imagens recém-geradas.
+O túnel é temporário e a URL é renovada em cada sessão. Enquanto a sessão T4 estiver desligada, o painel e a geração não estarão acessíveis; os itens já sincronizados continuam na conta MEGA. O MEGA é usado para o arquivo persistente, enquanto o Colab mantém apenas o cache temporário de checkpoints, LoRAs e imagens recém-geradas. No V7, reserve espaço adicional para o snapshot AuraFlow e prefira testar primeiro em 768×768 antes de aumentar a resolução.

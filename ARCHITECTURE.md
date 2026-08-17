@@ -8,6 +8,8 @@ O formulário principal mostra somente o modelo ativo. Checkpoint, sampler e loj
 
 O perfil inicial é `prefect-pony-xl-v6`, com base `Pony`, modelo Civitai `439889`, versão `2114187` e engine `sdxl`. O runtime baixa o arquivo SafeTensor single-file do Civitai com retomada HTTP e cria as pipelines `StableDiffusionXLPipeline` e `StableDiffusionXLImg2ImgPipeline` diretamente a partir do checkpoint fp16. O fluxo oferece TXT→IMG e IMG→IMG; o cache Hugging Face permanece disponível para perfis que precisem de componentes auxiliares, mas não é exigido pelo perfil padrão.
 
+O perfil opcional `pony-v7-base` usa a família `pony-v7` e engine `auraflow`. O `GeneratorEngine` carrega `purplesmartai/pony-v7-base` com `DiffusionPipeline.from_pretrained`, usando `HF_HUB_CACHE`, `torch.float16` e offload de CPU quando nenhum `device_map` explícito foi configurado. A integração inicial expõe apenas TXT→IMG em 768–1024 px com `flow_euler`; IMG→IMG e LoRAs são recusados pelo contrato até que sejam validados para AuraFlow. A separação por engine mantém o pipeline SDXL do V6 intacto.
+
 ## Catálogo Civitai
 
 A rota `GET /api/model-catalog` consulta checkpoints Civitai com query, tag, família, ordenação, paginação e filtro adulto. A base Civitai é traduzida por `civitai_base_for_family`: Illustrious/NoobAI, Pony, SDXL, Flux e SD 3. Cada versão é convertida em um perfil público com família, engine, defaults e arquivo principal.
@@ -22,12 +24,13 @@ A rota `GET /api/prompt-store` também recebe a família ativa. O servidor consu
 
 ## Engines e perfis
 
-O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, retoma o checkpoint Civitai se houver `.part` e cria as pipelines text-to-image e image-to-image; jobs seguintes não repetem o download. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
+O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, retoma o checkpoint Civitai se houver `.part` e cria as pipelines text-to-image e image-to-image; jobs seguintes não repetem o download. Para `auraflow`, o Diffusers gerencia o snapshot por repositório/cache e o engine não cria uma pipeline IMG→IMG. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
 
 | Família | Engine | Loja de LoRAs | Estado padrão |
 |---|---|---|---|
 | `sdxl-illustrious` | `sdxl` | Illustrious | Geração disponível com pipeline SDXL |
 | `pony` | `sdxl` | Pony | Geração disponível com SDXL em TXT→IMG e IMG→IMG |
+| `pony-v7` | `auraflow` | Desativada inicialmente | TXT→IMG disponível; IMG→IMG e LoRAs bloqueadas |
 | `sdxl` | `sdxl` | SDXL 1.0 | Geração disponível com pipeline SDXL |
 | `flux` | engine separado | Flux | Catalogável; geração bloqueada |
 | `sd3` | engine separado | SD 3 | Catalogável; geração bloqueada |
@@ -45,7 +48,7 @@ A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execu
 | Interface e API | Processo Flask na porta 7860 | Login por senha e sessão HTTP-only |
 | Geração | Fila de um trabalhador no processo Colab | Somente usuário autenticado; uma tarefa ativa por vez |
 | Perfis de checkpoint | `MODEL_SPECS`, `MODELS_CONFIG` e `model_profiles.json` | IDs Civitai validados no servidor |
-| Checkpoints | `STUDIO_ROOT/models` | Download executado somente pelo servidor |
+| Checkpoints | `STUDIO_ROOT/models` e `HF_HUB_CACHE` | Download executado somente pelo servidor |
 | LoRAs | `STUDIO_ROOT/loras` | Catálogo Civitai e download executados somente pelo servidor |
 | Resultados e metadata | Conta MEGA em `MEGA_FOLDER` | Credenciais exclusivas do processo Colab |
 | Exclusão | `DELETE /api/history/<job_id>` | Sessão autenticada, CSRF e confirmação remota |
@@ -76,4 +79,4 @@ A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execu
 }
 ```
 
-O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels para SDXL, 10–60 steps e escala de guidance entre 1 e 15. O Prefect Pony XL V6 aceita TXT→IMG e IMG→IMG no fluxo atual. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.
+O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels para SDXL, 10–60 steps e escala de guidance entre 1 e 15. O Prefect Pony XL V6 aceita TXT→IMG, IMG→IMG e LoRAs compatíveis. O Pony V7 aceita inicialmente apenas TXT→IMG entre 768 e 1024 pixels e exige `flow_euler`; IMG→IMG e LoRAs são bloqueadas por perfil. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.

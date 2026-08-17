@@ -68,9 +68,11 @@ def main() -> None:
     if '"--upgrade", "--no-deps"' not in launcher_source:
         raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
     if 'transformers_version < Version("4.51.0")' not in launcher_source:
-        raise AssertionError("O runtime deve confirmar Transformers 4.51.0+ para o pipeline Pony/SDXL")
+        raise AssertionError("O runtime deve confirmar Transformers 4.51.0+ para o pipeline Pony/SDXL/AuraFlow")
     if 'diffusers_version < Version("0.39.0")' not in launcher_source:
-        raise AssertionError("O runtime deve confirmar Diffusers 0.39.0+ para o pipeline Pony/SDXL")
+        raise AssertionError("O runtime deve confirmar Diffusers 0.39.0+ para o pipeline Pony/SDXL/AuraFlow")
+    if 'MODEL_ID=pony-v7-base' not in launcher_source or 'PONY_V7_REPO' not in launcher_source:
+        raise AssertionError("O inicializador deve oferecer ativação explícita do Pony V7")
     if "from Crypto.Cipher import AES" not in launcher_source:
         raise AssertionError("O runtime deve validar o módulo Crypto exigido pelo cliente MEGA")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
@@ -78,10 +80,12 @@ def main() -> None:
         raise AssertionError("O servidor deve usar as APIs atuais de slicing e tiling do VAE")
     if (
         "from diffusers import AuraFlowPipeline" in server_source
-        or "AuraFlowTransformer2DModel" in server_source
         or "snapshot_download" in server_source
         or "from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline" not in server_source
         or "StableDiffusionXLPipeline.from_single_file" not in server_source
+        or "DiffusionPipeline.from_pretrained" not in server_source
+        or 'if engine == "auraflow"' not in server_source
+        or "FlowMatchEulerDiscreteScheduler" not in server_source
         or "torch.float16" not in server_source
         or "callback_on_step_end" not in server_source
         or "response.status_code == 206" not in server_source
@@ -90,7 +94,7 @@ def main() -> None:
         or "_extract_first_image" not in server_source
         or "from diffusers import ModularPipeline" in server_source
     ):
-        raise AssertionError("Pony deve usar o pipeline SDXL single-file com suporte TXT→IMG e IMG→IMG")
+        raise AssertionError("O servidor deve preservar SDXL V6 e oferecer carregamento Diffusers do Pony V7")
     if "archive-initializer" not in server_source or "archive_ready" not in server_source:
         raise AssertionError("A conexão MEGA deve ocorrer sem bloquear a abertura do servidor")
     if '"ready": archive_ready.is_set()' not in server_source:
@@ -126,6 +130,26 @@ def main() -> None:
     assert_equal(adaptive_img2img.mode, "img2img", "SDXL Pony deve aceitar IMG→IMG")
     adaptive_high_res = server.validate_params({"prompt": "pony high resolution", "model": server.DEFAULT_MODEL_ID, "width": 1024, "height": 768, "sampler": "euler_a"}, None)
     assert_equal(adaptive_high_res.width, 1024, "SDXL deve aceitar largura máxima de 1024 no perfil padrão")
+    v7_spec = server.get_model_spec("pony-v7-base")
+    assert_equal(v7_spec["family"], "pony-v7", "O perfil V7 deve usar família própria")
+    assert_equal(v7_spec["engine"], "auraflow", "O perfil V7 deve usar AuraFlow")
+    assert_equal(v7_spec["repo"], "purplesmartai/pony-v7-base", "O V7 deve apontar para o repositório oficial")
+    assert_equal(v7_spec["supports_img2img"], False, "IMG→IMG deve ficar bloqueado no V7 inicial")
+    assert_equal(v7_spec["supports_lora"], False, "LoRAs devem ficar bloqueadas no V7 inicial")
+    v7_params = server.validate_params({"prompt": "pony v7", "model": "pony-v7-base", "width": 768, "height": 768, "steps": 30, "guidance": 3.5, "sampler": "flow_euler"}, None)
+    assert_equal(v7_params.sampler, "flow_euler", "V7 deve usar Flow Euler")
+    for payload, expected in [
+        ({"prompt": "pony v7", "model": "pony-v7-base", "mode": "img2img", "sampler": "flow_euler"}, "IMG→IMG"),
+        ({"prompt": "pony v7", "model": "pony-v7-base", "sampler": "euler_a"}, "FlowMatch"),
+        ({"prompt": "pony v7", "model": "pony-v7-base", "sampler": "flow_euler", "loras": [{"version_id": 1}]}, "LoRAs"),
+    ]:
+        try:
+            server.validate_params(payload, "/tmp/source.png" if payload.get("mode") == "img2img" else None)
+        except ValueError as error:
+            if expected not in str(error):
+                raise AssertionError(f"Mensagem inesperada para restrição V7: {error}")
+        else:
+            raise AssertionError(f"Restrição V7 não aplicada: {payload}")
     if "MODELS_CONFIG" not in server_source or "delete_job" not in server_source:
         raise AssertionError("O servidor deve expor perfis configuráveis e exclusão remota")
 

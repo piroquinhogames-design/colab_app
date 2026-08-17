@@ -50,7 +50,7 @@
           </div>
           <div class="model-control hidden" aria-hidden="true">
             <select id="model" name="model"></select>
-            <select id="sampler" name="sampler"><option value="euler_a">Euler a</option><option value="euler">Euler</option><option value="dpmpp_2m">DPM++ 2M</option><option value="dpmpp_2m_sde_gpu">DPM++ 2M SDE GPU</option></select>
+            <select id="sampler" name="sampler"><option value="flow_euler">Flow Euler / AuraFlow</option><option value="euler_a">Euler a</option><option value="euler">Euler</option><option value="dpmpp_2m">DPM++ 2M</option><option value="dpmpp_2m_sde_gpu">DPM++ 2M SDE GPU</option></select>
           </div>
 
           <label class="field-label" for="prompt">PROMPT PRINCIPAL</label>
@@ -120,7 +120,7 @@
     <dialog id="settings-dialog" class="settings-dialog">
       <div class="dialog-top"><div><p class="eyebrow">[ MODELLAB / ENGINE CONTROL ]</p><h2>CONFIGURAÇÕES</h2><p class="store-lead">O checkpoint e o sampler ficam aqui para manter o painel de geração limpo. Ao trocar o modelo, os defaults e as lojas acompanham a família automaticamente.</p></div><button id="close-model-settings" type="button" class="close-button" aria-label="Fechar configurações">×</button></div>
       <section class="settings-section panel-inset">
-        <div class="settings-grid"><div><label class="field-label" for="settings-model">CHECKPOINT / FAMÍLIA</label><select id="settings-model"></select><p id="settings-model-info" class="settings-help"></p></div><div><label class="field-label" for="settings-sampler">SAMPLER RECOMENDADO</label><select id="settings-sampler"><option value="euler_a">Euler a</option><option value="euler">Euler</option><option value="dpmpp_2m">DPM++ 2M</option><option value="dpmpp_2m_sde_gpu">DPM++ 2M SDE GPU</option></select><p class="settings-help">O sampler é sincronizado com o campo interno usado pela geração.</p></div></div>
+        <div class="settings-grid"><div><label class="field-label" for="settings-model">CHECKPOINT / FAMÍLIA</label><select id="settings-model"></select><p id="settings-model-info" class="settings-help"></p></div><div><label class="field-label" for="settings-sampler">SAMPLER RECOMENDADO</label><select id="settings-sampler"><option value="flow_euler">Flow Euler / AuraFlow</option><option value="euler_a">Euler a</option><option value="euler">Euler</option><option value="dpmpp_2m">DPM++ 2M</option><option value="dpmpp_2m_sde_gpu">DPM++ 2M SDE GPU</option></select><p class="settings-help">O sampler é sincronizado com o campo interno usado pela geração.</p></div></div>
         <div class="settings-actions"><button id="open-model-store" type="button" class="signal-button small">ABRIR LOJA DE MODELOS</button><span id="settings-engine-status" class="settings-status">ENGINE // --</span></div>
       </section>
     </dialog>

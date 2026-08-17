@@ -152,8 +152,8 @@ def main() -> None:
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
 
-    # Configuração técnica padronizada: Prefect Pony XL V6 é um checkpoint
-    # SDXL single-file fp16 e pode ser carregado diretamente pelo Diffusers.
+    # Configuração técnica padronizada. O V6 continua sendo o default para evitar
+    # download inesperado; defina MODEL_ID=pony-v7-base para ativar AuraFlow.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
     if "HF_HOME" not in os.environ:
         legacy_hf_home = Path.home() / ".cache" / "huggingface"
@@ -163,14 +163,24 @@ def main() -> None:
     os.environ.setdefault("HF_HUB_CACHE", f"{os.environ['HF_HOME']}/hub")
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
-    # Substitui defaults antigos persistidos no runtime; perfis customizados ainda
-    # podem ser fornecidos por MODELS_CONFIG.
-    os.environ["MODEL_ID"] = "prefect-pony-xl-v6"
-    os.environ["MODEL_URL"] = "https://civitai.red/api/download/models/2114187?fileId=2008663"
-    os.environ["MODEL_REPO"] = ""
-    os.environ["MODEL_PATH"] = f"{os.environ["STUDIO_ROOT"]}/models/prefect_pony_v6.fp16.safetensors"
-    os.environ["MODEL_FAMILY"] = "pony"
-    print("[setup] Perfil Prefect Pony XL V6 padronizado; SDXL single-file + cache HTTP/HF configurados.")
+    # Perfis customizados ainda podem ser fornecidos por MODELS_CONFIG. O V7
+    # usa o snapshot Diffusers no cache HF; o V6 usa o arquivo Civitai legado.
+    os.environ.setdefault("MODEL_ID", "prefect-pony-xl-v6")
+    selected_model = os.environ["MODEL_ID"].strip().lower()
+    if selected_model == "pony-v7-base":
+        os.environ.setdefault("PONY_V7_REPO", "purplesmartai/pony-v7-base")
+        os.environ.setdefault("PONY_V7_PATH", f"{os.environ['HF_HUB_CACHE']}/models--purplesmartai--pony-v7-base")
+        os.environ.setdefault("MODEL_FAMILY", "pony-v7")
+        os.environ.setdefault("MODEL_URL", "")
+        os.environ.setdefault("MODEL_REPO", os.environ["PONY_V7_REPO"])
+        os.environ.setdefault("MODEL_PATH", os.environ["PONY_V7_PATH"])
+        print("[setup] Perfil Pony V7 Base ativado; AuraFlow + snapshot Hugging Face + offload configurados.")
+    else:
+        os.environ.setdefault("MODEL_URL", "https://civitai.red/api/download/models/2114187?fileId=2008663")
+        os.environ.setdefault("MODEL_REPO", "")
+        os.environ.setdefault("MODEL_PATH", f"{os.environ['STUDIO_ROOT']}/models/prefect_pony_v6.fp16.safetensors")
+        os.environ.setdefault("MODEL_FAMILY", "pony")
+        print("[setup] Perfil Prefect Pony XL V6 selecionado; SDXL single-file + cache HTTP/HF configurados.")
 
     install_requirements()
     validate_runtime()

@@ -30,8 +30,8 @@ const EDIT_LEVELS = {
   high: {label: 'ALTO', strength: 0.85},
 };
 
-function syncResolutionOptions(_engine) {
-  const minimum = 512;
+function syncResolutionOptions(engine) {
+  const minimum = engine === 'auraflow' ? 768 : 512;
   const maximum = 1024;
   const sizes = Array.from({length: ((maximum - minimum) / 64) + 1}, (_, index) => minimum + index * 64);
   ['width', 'height'].forEach((id) => {
@@ -102,6 +102,23 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
   if ($('#model') && $('#model').value !== model.id) $('#model').value = model.id;
   if ($('#settings-model')) $('#settings-model').value = model.id;
   const family = String(model.family || 'sdxl').toUpperCase();
+  const supportsImg2Img = model.supports_img2img !== false;
+  const supportsLora = model.supports_lora !== false;
+  const img2imgButton = $('.mode[data-mode="img2img"]');
+  if (img2imgButton) {
+    img2imgButton.disabled = !supportsImg2Img;
+    img2imgButton.title = supportsImg2Img ? '' : 'IMG→IMG ainda não está disponível para este engine.';
+  }
+  const catalogButton = $('#open-catalog');
+  if (catalogButton) {
+    catalogButton.disabled = !supportsLora;
+    catalogButton.title = supportsLora ? '' : 'LoRAs compatíveis com este engine ainda não foram validadas.';
+  }
+  if (!supportsImg2Img && state.mode === 'img2img') setMode('text2img', {silent: true});
+  if (!supportsLora && state.selectedLoras.length) {
+    state.selectedLoras = [];
+    renderSelectedLoras();
+  }
   if (applyDefaults) {
     [['steps', defaults.steps], ['guidance', defaults.guidance], ['strength', defaults.strength]].forEach(([id, value]) => {
       if (value === undefined || !$(`#${id}`)) return;
@@ -114,6 +131,8 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
   }
   const badge = $('#model-badge');
   if (badge) badge.textContent = `${family} // ${model.ready === false ? 'ENGINE PENDENTE' : (model.cached ? 'CACHE LOCAL' : 'DOWNLOAD SOB DEMANDA')}`;
+  const loraDivider = $('.lora-divider');
+  if (loraDivider) loraDivider.classList.toggle('disabled-section', !supportsLora);
   const engine = $('#engine-readout');
   if (engine) engine.textContent = String(model.name || model.id).slice(0, 32).toUpperCase();
   if ($('#active-model-name')) $('#active-model-name').textContent = String(model.name || model.id).toUpperCase();
@@ -142,6 +161,11 @@ function renderModels(models, selectedId = '') {
 }
 
 function setMode(mode, {silent = false} = {}) {
+  const selectedModel = state.models.find((item) => item.id === $('#model')?.value);
+  if (mode === 'img2img' && selectedModel?.supports_img2img === false) {
+    mode = 'text2img';
+    if (!silent) toast('IMG→IMG ainda não está disponível para o engine selecionado.', true);
+  }
   state.mode = mode;
   $$('.mode').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
   $('#upload-zone').classList.toggle('hidden', mode !== 'img2img');
