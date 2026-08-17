@@ -76,7 +76,9 @@ class ComfyBackend:
         source = self.root / "comfy_memory_node.py"
         if not source.exists():
             raise RuntimeError("O custom node de manutenção de memória não está presente no projeto.")
-        destination_dir = self.comfy_dir / "custom_nodes"
+        # O ComfyUI resolve custom_nodes relativo a --base-directory, que é
+        # comfy_root; não relativo ao diretório onde o código foi clonado.
+        destination_dir = self.comfy_root / "custom_nodes"
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = destination_dir / "modellab_memory.py"
         if not destination.exists() or destination.read_bytes() != source.read_bytes():

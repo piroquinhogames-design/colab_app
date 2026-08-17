@@ -10,7 +10,7 @@ with TemporaryDirectory() as temporary:
     os.environ['COMFYUI_DIR'] = str(install_root / 'comfy')
     install_backend = ComfyBackend(Path(__file__).resolve().parent, install_root / 'runtime', 8188)
     install_backend._ensure_cleanup_node()
-    assert (install_backend.comfy_dir / 'custom_nodes' / 'modellab_memory.py').exists()
+    assert (install_backend.comfy_root / 'custom_nodes' / 'modellab_memory.py').exists()
     log_handle = install_backend._open_log()
     log_handle.write('RuntimeError: falha de teste no loader Anima\\n')
     log_handle.close()
