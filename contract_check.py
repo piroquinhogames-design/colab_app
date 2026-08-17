@@ -85,6 +85,7 @@ def main() -> None:
         or "ANIMA_CPU_OFFLOAD" not in server_source
         or "enable_tiling" not in server_source
         or "_extract_first_image" not in server_source
+        or "_normalize_anima_guider_input_fields" not in server_source
         or 'options["output"] = "images"' not in server_source
         or "component.half()" not in server_source
         or "component.to(execution_device)" not in server_source

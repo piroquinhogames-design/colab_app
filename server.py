@@ -659,6 +659,52 @@ class GeneratorEngine:
                 vae.enable_slicing()
 
     @staticmethod
+    def _normalize_anima_guider_input_fields(pipeline: Any) -> int:
+        """Normaliza a configuração do denoiser Anima entre versões do Diffusers.
+
+        Algumas versões/runtime do Diffusers desserializam `guider_input_fields`
+        como lista, embora o bloco oficial espere um dicionário e chame
+        `.keys()` durante a inferência. O mapa abaixo é o contrato oficial do
+        Anima e também converte valores de lista em tuplas.
+        """
+        expected = {
+            "encoder_hidden_states": ("prompt_embeds", "negative_prompt_embeds"),
+        }
+        root = getattr(pipeline, "_blocks", None)
+        visited: set[int] = set()
+        normalized = 0
+
+        def visit(block: Any) -> None:
+            nonlocal normalized
+            if block is None or id(block) in visited:
+                return
+            visited.add(id(block))
+
+            fields = getattr(block, "_guider_input_fields", None)
+            if isinstance(fields, list):
+                block._guider_input_fields = dict(expected)
+                normalized += 1
+            elif isinstance(fields, dict):
+                fixed = {}
+                changed = False
+                for key, value in fields.items():
+                    if isinstance(value, list):
+                        value = tuple(value)
+                        changed = True
+                    fixed[key] = value
+                if changed:
+                    block._guider_input_fields = fixed
+                    normalized += 1
+
+            sub_blocks = getattr(block, "sub_blocks", None)
+            if sub_blocks is not None and hasattr(sub_blocks, "values"):
+                for child in sub_blocks.values():
+                    visit(child)
+
+        visit(root)
+        return normalized
+
+    @staticmethod
     def _extract_first_image(result: Any) -> Image.Image:
         """Normaliza saídas da ModularPipeline e da DiffusionPipeline clássica."""
         if isinstance(result, dict):
@@ -764,6 +810,7 @@ class GeneratorEngine:
                 self.pipe.load_components(names=network_components, **load_kwargs)
                 tokenizer, t5_tokenizer = self._load_anima_fast_tokenizers(repo_id)
                 self.pipe.update_components(tokenizer=tokenizer, t5_tokenizer=t5_tokenizer)
+                self._normalize_anima_guider_input_fields(self.pipe)
                 self._prepare_anima_for_t4(self.pipe, torch, cpu_offload=ANIMA_CPU_OFFLOAD)
                 self.img_pipe = None
                 self.loaded_model_id = spec["id"]
