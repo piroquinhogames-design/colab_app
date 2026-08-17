@@ -104,7 +104,12 @@
         <aside class="panel telemetry-panel">
           <div class="panel-heading"><span class="bracket">[</span><h2>TELEMETRIA</h2><span class="bracket">]</span></div>
           <div class="telemetry-status"><div class="pulse-core"></div><p id="telemetry-title">EM ESPERA</p><span id="telemetry-subtitle">Sem job ativo no buffer.</span></div>
-          <div class="progress-rail"><div id="progress-bar"></div></div><strong id="progress-number">0%</strong>
+          <div class="progress-caption"><span>PROGRESSO DA GERAÇÃO</span><strong id="progress-number">0%</strong></div>
+          <div class="progress-rail"><div id="progress-bar"></div></div>
+          <div class="stage-progress-list" aria-live="polite">
+            <div class="stage-progress" data-stage="download"><div class="stage-progress-head"><span>DOWNLOAD DO MODELO</span><strong id="download-progress-number">0%</strong></div><div class="progress-rail compact"><div id="download-progress-bar"></div></div></div>
+            <div class="stage-progress" data-stage="pipeline"><div class="stage-progress-head"><span>CARREGAMENTO DA PIPELINE</span><strong id="pipeline-progress-number">0%</strong></div><div class="progress-rail compact"><div id="pipeline-progress-bar"></div></div></div>
+          </div>
           <dl class="technical-readout"><div><dt>ENGINE</dt><dd id="engine-readout">MODEL PROFILE</dd></div><div><dt>QUEUE</dt><dd id="queue-readout">0 JOBS</dd></div><div><dt>ARCHIVE</dt><dd id="archive-readout">CHECANDO</dd></div><div><dt>NODE</dt><dd>T4 / CUDA</dd></div></dl>
           <div class="telemetry-log" id="telemetry-log"><p><span>00:00:00</span> Aguardando conexão com o núcleo.</p></div>
           <div class="signal-diagram" aria-hidden="true"><span></span><i></i><span></span><i></i><span></span></div>

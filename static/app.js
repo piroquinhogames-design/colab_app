@@ -572,15 +572,41 @@ async function refreshHistory({sync = false} = {}) {
   } catch (error) { toast(error.message, true); }
 }
 
+function setStageProgress(barId, numberId, value) {
+  const progress = Math.max(0, Math.min(100, Number(value) || 0));
+  const bar = $(`#${barId}`);
+  const number = $(`#${numberId}`);
+  if (bar) bar.style.width = `${progress}%`;
+  if (number) number.textContent = `${progress}%`;
+}
+
 function setTelemetry(job) {
   const status = job?.status || 'idle';
-  const progress = job?.progress || 0;
+  const progress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
+  const downloadProgress = status === 'completed' ? 100 : (Number(job?.download_progress) || 0);
+  const pipelineProgress = status === 'completed' ? 100 : (Number(job?.pipeline_progress) || 0);
+  const phaseLabels = {
+    queued: 'Aguardando o job entrar no worker.',
+    starting: 'Iniciando o carregamento do modelo.',
+    checking_model: 'Verificando o cache local do modelo.',
+    downloading_model: 'Baixando o checkpoint do modelo.',
+    loading_pipeline: 'Carregando os componentes da pipeline.',
+    configuring_pipeline: 'Configurando memória e scheduler.',
+    preparing_img2img: 'Preparando a pipeline img2img.',
+    pipeline_ready: 'Pipeline carregada; preparando a geração.',
+    preparing_loras: 'Carregando os adaptadores selecionados.',
+    generating: 'Pipeline pronta; gerando a imagem.',
+    completed: 'Geração concluída.',
+    failed: 'Falha durante a geração.',
+  };
   $('#progress-bar').style.width = `${progress}%`;
   $('#progress-number').textContent = `${progress}%`;
+  setStageProgress('download-progress-bar', 'download-progress-number', downloadProgress);
+  setStageProgress('pipeline-progress-bar', 'pipeline-progress-number', pipelineProgress);
   $('#vram-readout').textContent = `VRAM // ${job?.vram_gb ? `${job.vram_gb} GB` : '--'}`;
   const labels = {queued:'NO BUFFER', running:'SINAL EM PROCESSAMENTO', completed:'SINAL ARQUIVADO', failed:'FALHA DE SINAL', idle:'EM ESPERA'};
   $('#telemetry-title').textContent = labels[status] || 'EM ESPERA';
-  $('#telemetry-subtitle').textContent = job?.error || (status === 'running' ? `Job ${job.id.slice(0, 8)} em execução.` : 'Sem job ativo no buffer.');
+  $('#telemetry-subtitle').textContent = job?.error || phaseLabels[job?.progress_phase] || (status === 'running' ? `Job ${job.id.slice(0, 8)} em execução.` : 'Sem job ativo no buffer.');
   $('#job-state').textContent = labels[status] || 'PRONTO PARA INICIAR';
   $('#generate').disabled = ['queued', 'running'].includes(status);
 }

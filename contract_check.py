@@ -97,6 +97,8 @@ def main() -> None:
         raise AssertionError("O bootstrap deve expor quando a preparação do MEGA terminou")
     if "_prepare_lora_file" not in server_source or "_is_unsupported_lora_key" not in server_source:
         raise AssertionError("O servidor deve preparar LoRAs com metadados alpha incompatíveis")
+    if any(token not in server_source for token in ("download_progress", "pipeline_progress", "progress_phase")):
+        raise AssertionError("O job deve expor o progresso separado do download e da pipeline")
     sample_image = server.Image.new("RGBA", (2, 2), (255, 0, 0, 128))
     extracted = server.GeneratorEngine._extract_first_image(types.SimpleNamespace(images=[sample_image]))
     if extracted.mode != "RGB" or extracted.size != (2, 2):
@@ -109,6 +111,8 @@ def main() -> None:
     app_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
     if "refreshArchiveState" not in app_source or "refreshHistory({sync: true})" not in app_source:
         raise AssertionError("O frontend deve atualizar e sincronizar o arquivo quando o MEGA conectar depois do bootstrap")
+    if any(token not in app_source for token in ("download-progress-number", "pipeline-progress-number", "setStageProgress")):
+        raise AssertionError("O frontend deve renderizar as porcentagens de download e carregamento da pipeline")
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
     default_spec = server.get_model_spec()

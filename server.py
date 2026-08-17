@@ -361,6 +361,9 @@ class Job:
     mega_synced: bool = False
     error: str | None = None
     vram_gb: float | None = None
+    download_progress: int = 0
+    pipeline_progress: int = 0
+    progress_phase: str = "queued"
 
     def public(self) -> dict[str, Any]:
         data = asdict(self)
@@ -602,10 +605,12 @@ class GeneratorEngine:
         self.loaded_model_id: str | None = None
         self.load_lock = threading.Lock()
 
-    def ensure_checkpoint(self, spec: dict[str, Any]) -> Path:
+    def ensure_checkpoint(self, spec: dict[str, Any], progress: Callable[[int], None] | None = None) -> Path:
+        report = progress or (lambda _value: None)
         model_path = Path(spec["path"]).expanduser()
         model_path.parent.mkdir(parents=True, exist_ok=True)
         if model_path.exists() and model_path.stat().st_size > 500 * 1024 * 1024:
+            report(100)
             return model_path
         url = str(spec.get("url") or "").strip()
         if not url:
@@ -620,13 +625,27 @@ class GeneratorEngine:
             append = bool(resume_at and response.status_code == 206)
             if not append:
                 resume_at = 0
+            try:
+                content_length = int(response.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                content_length = 0
+            total_bytes = content_length + resume_at if append and content_length else content_length
+            downloaded_bytes = resume_at
+            last_progress = -1
             with target.open("ab" if append else "wb") as handle:
                 for chunk in response.iter_content(1024 * 1024):
                     if chunk:
                         handle.write(chunk)
+                        downloaded_bytes += len(chunk)
+                        if total_bytes:
+                            current = min(99, int(downloaded_bytes * 100 / total_bytes))
+                            if current != last_progress:
+                                report(current)
+                                last_progress = current
         if target.stat().st_size < 500 * 1024 * 1024:
             raise RuntimeError("O checkpoint baixado parece incompleto; tente novamente; o arquivo parcial será retomado.")
         target.replace(model_path)
+        report(100)
         return model_path
 
     @staticmethod
@@ -654,8 +673,10 @@ class GeneratorEngine:
         except Exception:
             pass
 
-    def _load_pipeline(self, spec: dict[str, Any]) -> None:
+    def _load_pipeline(self, spec: dict[str, Any], update: Callable[..., None] | None = None) -> None:
+        report = update or (lambda *_args, **_kwargs: None)
         if self.pipe is not None and self.loaded_model_id == spec["id"]:
+            report(0, self._vram(), download=100, pipeline=100, phase="pipeline_ready")
             return
         if self.pipe is not None:
             self._release_pipeline()
@@ -667,16 +688,24 @@ class GeneratorEngine:
 
         if engine != "sdxl":
             raise RuntimeError(f"Engine {engine!r} ainda não está disponível para geração.")
-        model_path = self.ensure_checkpoint(spec)
+        report(0, self._vram(), download=0, pipeline=0, phase="checking_model")
+        model_path = self.ensure_checkpoint(
+            spec,
+            lambda value: report(0, self._vram(), download=value, pipeline=0, phase="downloading_model"),
+        )
+        report(0, self._vram(), download=100, pipeline=10, phase="loading_pipeline")
         from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
         try:
             self.pipe = StableDiffusionXLPipeline.from_single_file(
                 str(model_path), torch_dtype=torch.float16, use_safetensors=True
             )
+            report(0, self._vram(), download=100, pipeline=65, phase="configuring_pipeline")
             self._configure_memory_savers(self.pipe)
             self.img_pipe = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
+            report(0, self._vram(), download=100, pipeline=88, phase="preparing_img2img")
             self._configure_memory_savers(self.img_pipe)
             self.loaded_model_id = spec["id"]
+            report(0, self._vram(), download=100, pipeline=100, phase="pipeline_ready")
         except Exception:
             self._release_pipeline()
             raise
@@ -770,12 +799,12 @@ class GeneratorEngine:
             raise RuntimeError("O pipeline retornou uma imagem em formato não suportado.")
         return image.convert("RGB")
 
-    def generate(self, job: Job, update: Callable[[int, float | None], None]) -> Path:
+    def generate(self, job: Job, update: Callable[..., None]) -> Path:
         import torch
 
         with self.load_lock:
             spec = get_model_spec(job.params.model_id)
-            self._load_pipeline(spec)
+            self._load_pipeline(spec, update)
             assert self.pipe is not None
             self._apply_sampler(job.params.sampler)
             if job.params.mode == "img2img":
@@ -790,6 +819,7 @@ class GeneratorEngine:
                 except Exception:
                     pass
 
+                update(0, self._vram(), download=100, pipeline=100, phase="preparing_loras")
                 adapters: list[str] = []
                 weights: list[float] = []
                 for index, selected in enumerate(job.params.loras):
@@ -813,7 +843,13 @@ class GeneratorEngine:
                 callback_steps = max(job.params.steps, 1)
 
                 def progress_callback(_: Any, step: int, __: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
-                    update(min(98, int((step + 1) * 100 / callback_steps)), self._vram())
+                    update(
+                        min(98, int((step + 1) * 100 / callback_steps)),
+                        self._vram(),
+                        download=100,
+                        pipeline=100,
+                        phase="generating",
+                    )
                     return callback_kwargs
 
                 options: dict[str, Any] = {
@@ -839,7 +875,7 @@ class GeneratorEngine:
 
                 output = OUTPUTS / f"{job.id}.png"
                 result.save(output, format="PNG")
-                update(100, self._vram())
+                update(100, self._vram(), download=100, pipeline=100, phase="completed")
                 return output
             finally:
                 try:
@@ -866,7 +902,11 @@ class JobManager:
                 loras = [LoRASelection(**item) for item in params.get("loras", [])]
                 restored = Job(
                     id=data["id"], created_at=data["created_at"], status=data.get("status", "completed"),
-                    progress=data.get("progress", 100), params=GenerationParams(
+                    progress=data.get("progress", 100),
+                    download_progress=data.get("download_progress", 100 if data.get("status", "completed") == "completed" else 0),
+                    pipeline_progress=data.get("pipeline_progress", 100 if data.get("status", "completed") == "completed" else 0),
+                    progress_phase=data.get("progress_phase", "completed" if data.get("status", "completed") == "completed" else "queued"),
+                    params=GenerationParams(
                         prompt=params["prompt"], negative_prompt=params.get("negative_prompt", ""), seed=params["seed"],
                         steps=params["steps"], guidance=params["guidance"], width=params["width"], height=params["height"],
                         strength=params.get("strength", 0.65), mode=params["mode"],
@@ -886,9 +926,24 @@ class JobManager:
         self.pending.put(job.id)
         return job
 
-    def _update(self, job: Job, progress: int, vram: float | None) -> None:
+    def _update(
+        self,
+        job: Job,
+        progress: int,
+        vram: float | None,
+        *,
+        download: int | None = None,
+        pipeline: int | None = None,
+        phase: str | None = None,
+    ) -> None:
         with self.lock:
             job.progress, job.vram_gb, job.updated_at = progress, vram, now_iso()
+            if download is not None:
+                job.download_progress = max(0, min(100, int(download)))
+            if pipeline is not None:
+                job.pipeline_progress = max(0, min(100, int(pipeline)))
+            if phase is not None:
+                job.progress_phase = phase
 
     def _run(self) -> None:
         while True:
@@ -898,15 +953,19 @@ class JobManager:
                 if not job:
                     continue
                 job.status, job.updated_at = "running", now_iso()
+                job.progress_phase = "starting"
             try:
-                image = self.engine.generate(job, lambda progress, vram: self._update(job, progress, vram))
+                image = self.engine.generate(
+                    job,
+                    lambda progress, vram, **stages: self._update(job, progress, vram, **stages),
+                )
                 with self.lock:
                     job.filename = image.name
-                    job.status, job.progress, job.completed_at, job.updated_at = "completed", 100, now_iso(), now_iso()
+                    job.status, job.progress, job.download_progress, job.pipeline_progress, job.progress_phase, job.completed_at, job.updated_at = "completed", 100, 100, 100, "completed", now_iso(), now_iso()
                     job.mega_synced = self.archive.save_job(job, image)
             except Exception as exc:
                 with self.lock:
-                    job.status, job.error, job.updated_at = "failed", str(exc)[:500], now_iso()
+                    job.status, job.error, job.progress_phase, job.updated_at = "failed", str(exc)[:500], "failed", now_iso()
                     job.mega_synced = self.archive.save_job(job, None)
             finally:
                 self.pending.task_done()
