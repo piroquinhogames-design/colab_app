@@ -44,10 +44,8 @@ def assert_equal(actual, expected, message: str) -> None:
 def main() -> None:
     package_root = Path(__file__).resolve().parent
     requirements = (package_root / "requirements.txt").read_text(encoding="utf-8")
-    if "peft==0.17.0" not in requirements:
-        raise AssertionError("O pacote deve fixar a versão PEFT compatível com carregamento de LoRA")
-    if "accelerate==1.3.0" not in requirements:
-        raise AssertionError("Accelerate deve ser fixado para suportar offload no Colab")
+    if "peft" in requirements.lower() or "diffusers" in requirements.lower() or "accelerate" in requirements.lower():
+        raise AssertionError("O backend headless não deve instalar dependências exclusivas do Diffusers/PEFT")
     if "huggingface-hub>=0.34.0,<1.0" not in requirements:
         raise AssertionError("O Hub deve permanecer na série 0.x compatível com Transformers")
     if "hf-xet>=1.1.0,<2.0" not in requirements:
@@ -57,8 +55,8 @@ def main() -> None:
     if any(line.strip().startswith("torch") for line in requirements.splitlines()):
         raise AssertionError("O pacote não deve atualizar o PyTorch/CUDA que já vem com o Colab")
     launcher_source = (package_root / "launch_colab.py").read_text(encoding="utf-8")
-    if "def validate_runtime()" not in launcher_source or "PEFT incompatível" not in launcher_source:
-        raise AssertionError("O inicializador deve validar PEFT antes de iniciar o servidor")
+    if "def validate_runtime()" not in launcher_source or "encoder Qwen do Anima" not in launcher_source:
+        raise AssertionError("O inicializador deve validar o runtime do encoder Qwen antes de iniciar o servidor")
     if '"pip", "check"' in launcher_source:
         raise AssertionError("O inicializador não deve falhar por conflitos globais do Colab")
     if '"-m", "venv"' in launcher_source or "VENV_PYTHON" in launcher_source:
@@ -68,29 +66,25 @@ def main() -> None:
     if '"--upgrade", "--no-deps"' not in launcher_source:
         raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
     if 'transformers_version < Version("4.51.0")' not in launcher_source:
-        raise AssertionError("O runtime deve confirmar Transformers 4.51.0+ para o pipeline Pony/SDXL")
-    if 'diffusers_version < Version("0.39.0")' not in launcher_source:
-        raise AssertionError("O runtime deve confirmar Diffusers 0.39.0+ para o pipeline Pony/SDXL")
+        raise AssertionError("O runtime deve confirmar Transformers 4.51.0+ para o encoder Qwen do Anima")
+    if 'safetensors_version < Version("0.8.0")' not in launcher_source:
+        raise AssertionError("O runtime deve confirmar Safetensors 0.8.0+ para o loader Anima")
     if "from Crypto.Cipher import AES" not in launcher_source:
         raise AssertionError("O runtime deve validar o módulo Crypto exigido pelo cliente MEGA")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
-    if ".enable_vae_slicing()" in server_source or "enable_slicing()" not in server_source or "enable_tiling()" not in server_source:
-        raise AssertionError("O servidor deve usar as APIs atuais de slicing e tiling do VAE")
-    if (
-        "from diffusers import AuraFlowPipeline" in server_source
-        or "AuraFlowTransformer2DModel" in server_source
-        or "snapshot_download" in server_source
-        or "from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline" not in server_source
-        or "StableDiffusionXLPipeline.from_single_file" not in server_source
-        or "torch.float16" not in server_source
-        or "callback_on_step_end" not in server_source
-        or "response.status_code == 206" not in server_source
-        or 'headers["Range"]' not in server_source
-        or "enable_tiling" not in server_source
-        or "_extract_first_image" not in server_source
-        or "from diffusers import ModularPipeline" in server_source
-    ):
-        raise AssertionError("Pony deve usar o pipeline SDXL single-file com suporte TXT→IMG e IMG→IMG")
+    backend_source = (package_root / "comfy_backend.py").read_text(encoding="utf-8")
+    if "ComfyBackend" not in server_source or not (package_root / "comfy_memory_node.py").exists():
+        raise AssertionError("O servidor deve usar o backend headless do ComfyUI e o custom node de memória")
+    if "--gpu-only" not in backend_source or "--highvram" not in backend_source:
+        raise AssertionError("O backend deve manter modelo e encoders na GPU")
+    if "--disable-auto-launch" not in backend_source or "/prompt" not in backend_source:
+        raise AssertionError("O ComfyUI deve operar sem frontend e aceitar workflows pela API")
+    if "def status(self)" not in backend_source or "/api/comfy-health" not in server_source:
+        raise AssertionError("O backend deve expor health check não destrutivo")
+    if "response.status_code == 206" not in backend_source or 'headers["Range"]' not in backend_source:
+        raise AssertionError("Downloads grandes devem aceitar retomada por Range")
+    if "_extract_first_image" not in server_source:
+        raise AssertionError("O contrato de extração de imagem deve permanecer disponível")
     if "archive-initializer" not in server_source or "archive_ready" not in server_source:
         raise AssertionError("A conexão MEGA deve ocorrer sem bloquear a abertura do servidor")
     if '"ready": archive_ready.is_set()' not in server_source:
@@ -116,20 +110,25 @@ def main() -> None:
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
     default_spec = server.get_model_spec()
-    assert_equal(default_spec["id"], "prefect-pony-xl-v6", "O perfil padrão deve ser Prefect Pony XL V6")
-    assert_equal(default_spec["family"], "pony", "A família padrão deve ser Pony")
-    assert_equal(default_spec["engine"], "sdxl", "O engine padrão deve ser SDXL")
+    assert_equal(default_spec["id"], "nova-exanime-am", "O perfil padrão deve ser Nova EXAnime AM")
+    assert_equal(default_spec["family"], "anima", "A família padrão deve ser Anima")
+    assert_equal(default_spec["engine"], "comfyui", "O engine padrão deve ser ComfyUI headless")
     assert_equal(default_spec.get("repo", ""), "", "O perfil single-file não deve exigir um repositório Diffusers")
-    assert_equal(default_spec["civitai_model_id"], 439889, "O ID do modelo Civitai deve ser 439889")
-    assert_equal(default_spec["version_id"], 2114187, "O ID da versão Civitai deve ser 2114187")
-    assert_equal(server.public_model_spec(default_spec)["ready"], True, "O perfil SDXL deve aparecer como pronto")
+    assert_equal(default_spec["civitai_model_id"], 2856434, "O ID do modelo Civitai deve ser 2856434")
+    assert_equal(default_spec["version_id"], 3226184, "O ID da versão Civitai deve ser 3226184")
+    assert_equal(server.public_model_spec(default_spec)["ready"], True, "O perfil Anima deve aparecer como pronto")
     adaptive = server.validate_params({"prompt": "model profile test", "model": server.DEFAULT_MODEL_ID, "sampler": "euler_a"}, None)
     assert_equal(adaptive.model_id, server.DEFAULT_MODEL_ID, "Perfil de modelo deve ser preservado na validação")
     assert_equal(adaptive.sampler, "euler_a", "Sampler deve ser preservado na validação")
-    adaptive_img2img = server.validate_params({"prompt": "pony img2img", "model": server.DEFAULT_MODEL_ID, "mode": "img2img", "sampler": "euler_a"}, "/tmp/source.png")
-    assert_equal(adaptive_img2img.mode, "img2img", "SDXL Pony deve aceitar IMG→IMG")
-    adaptive_high_res = server.validate_params({"prompt": "pony high resolution", "model": server.DEFAULT_MODEL_ID, "width": 1024, "height": 768, "sampler": "euler_a"}, None)
-    assert_equal(adaptive_high_res.width, 1024, "SDXL deve aceitar largura máxima de 1024 no perfil padrão")
+    try:
+        server.validate_params({"prompt": "anima img2img", "model": server.DEFAULT_MODEL_ID, "mode": "img2img", "sampler": "euler_a"}, "/tmp/source.png")
+    except ValueError as exc:
+        if "text2img" not in str(exc):
+            raise
+    else:
+        raise AssertionError("Anima deve rejeitar img2img no workflow atual")
+    adaptive_high_res = server.validate_params({"prompt": "anima high resolution", "model": server.DEFAULT_MODEL_ID, "width": 1024, "height": 768, "sampler": "euler_a"}, None)
+    assert_equal(adaptive_high_res.width, 1024, "Anima deve aceitar largura máxima de 1024 no perfil padrão")
     if "MODELS_CONFIG" not in server_source or "delete_job" not in server_source:
         raise AssertionError("O servidor deve expor perfis configuráveis e exclusão remota")
 
@@ -139,11 +138,12 @@ def main() -> None:
     original_run = launch_colab.subprocess.run
     try:
         (isolated_root / "requirements.txt").write_text("", encoding="utf-8")
+        (isolated_root / "comfy_requirements.txt").write_text("", encoding="utf-8")
         launch_colab.APP_DIR = isolated_root
         launch_colab.subprocess.run = lambda command, **_: calls.append(command)
         launch_colab.install_requirements()
-        if len(calls) != 1 or calls[0][0] != sys.executable or "--no-deps" not in calls[0] or "--upgrade" not in calls[0]:
-            raise AssertionError("O instalador deve atualizar somente os pacotes diretos via pip global")
+        if len(calls) != 2 or any(command[0] != sys.executable or "--no-deps" not in command or "--upgrade" not in command for command in calls):
+            raise AssertionError("O instalador deve atualizar as dependências sem substituir o runtime CUDA")
     finally:
         launch_colab.APP_DIR = original_app_dir
         launch_colab.subprocess.run = original_run
@@ -160,14 +160,25 @@ def main() -> None:
 
     alternate_profile = client.post(
         "/api/model-profile",
-        json={"civitai_model_id": 999001, "version_id": 999002, "name": "Pony SDXL alternativo", "family": "pony", "base_model": "Pony"},
+        json={"civitai_model_id": 999001, "version_id": 999002, "name": "Anima alternativo", "family": "anima", "base_model": "Anima"},
         headers={"X-CSRF-Token": csrf},
     )
-    assert_equal(alternate_profile.status_code, 200, "Perfil Pony alternativo deve ser aceito pela loja")
+    assert_equal(alternate_profile.status_code, 200, "Perfil Anima alternativo deve ser aceito pela loja")
     alternate_json = alternate_profile.get_json()
-    assert_equal(alternate_json["engine"], "sdxl", "Perfil Pony alternativo deve usar SDXL")
-    if alternate_json.get("repo"):
-        raise AssertionError("Checkpoint Pony alternativo não deve herdar um repositório Diffusers")
+    assert_equal(alternate_json["engine"], "comfyui", "Perfil Anima alternativo deve usar ComfyUI")
+    rejected_profile = client.post(
+        "/api/model-profile",
+        json={"civitai_model_id": 999001, "version_id": 999003, "name": "Pony incompatível", "family": "pony", "base_model": "Pony"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert_equal(rejected_profile.status_code, 400, "Perfil SDXL incompatível deve ser rejeitado")
+
+    health = client.get("/api/comfy-health")
+    assert_equal(health.status_code, 200, "Health check do ComfyUI deve responder sem iniciar a UI")
+    health_json = health.get_json()
+    assert_equal(health_json["backend"], "comfyui-headless", "Health check deve identificar o backend headless")
+    if "comfy" not in health_json or "reachable" not in health_json["comfy"]:
+        raise AssertionError("Health check deve retornar o estado de conectividade do ComfyUI")
 
     boot = client.get("/api/bootstrap")
     assert_equal(boot.status_code, 200, "Bootstrap autenticado deve responder")
@@ -188,8 +199,8 @@ def main() -> None:
             return {"items": [{
                 "id": 42, "name": "Adapter", "creator": {"username": "artist"}, "tags": ["style"],
                 "modelVersions": [
-                    {"id": 73, "name": "Pony Style", "baseModel": "Pony", "images": [], "stats": {"downloadCount": 8}},
-                    {"id": 74, "name": "Pony Detail", "baseModel": "Pony", "images": [], "stats": {"downloadCount": 5}},
+                    {"id": 73, "name": "Anima Style", "baseModel": "Anima", "images": [], "stats": {"downloadCount": 8}},
+                    {"id": 74, "name": "Anima Detail", "baseModel": "Anima", "images": [], "stats": {"downloadCount": 5}},
                     {"id": 75, "name": "Outra base", "baseModel": "SDXL 1.0", "images": [], "stats": {"downloadCount": 99}},
                 ],
             }], "metadata": {"nextCursor": "next-page"}}
@@ -203,12 +214,12 @@ def main() -> None:
     finally:
         server.requests.get = original_get
     assert_equal(catalog.status_code, 200, "Catálogo deve responder")
-    assert_equal(called["params"]["baseModels"], "Pony", "Catálogo deve filtrar Pony por padrão")
+    assert_equal(called["params"]["baseModels"], "Anima", "Catálogo deve filtrar Anima por padrão")
     assert_equal(called["params"]["query"], "style adapter", "Catálogo deve encaminhar pesquisa por nome")
     catalog_json = catalog.get_json()
     assert_equal(catalog_json["items"][0]["version_id"], 73, "Versão padrão de LoRA deve ser exposta")
     assert_equal([item["id"] for item in catalog_json["items"][0]["versions"]], [73, 74], "Todas as versões Pony devem ser expostas")
-    assert_equal(catalog_json["items"][0]["versions"][1]["name"], "Pony Detail", "Nome da versão deve ser preservado")
+    assert_equal(catalog_json["items"][0]["versions"][1]["name"], "Anima Detail", "Nome da versão deve ser preservado")
     assert_equal(catalog_json["next_cursor"], "next-page", "Cursor deve ser preservado")
     assert_equal(called["params"]["nsfw"], "false", "Catálogo padrão deve declarar nsfw=false")
     server.requests.get = fake_get

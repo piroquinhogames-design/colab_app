@@ -50,8 +50,8 @@ HF_HUB_CACHE = Path(os.environ.get("HF_HUB_CACHE") or (HF_HOME / "hub")).resolve
 os.environ.setdefault("HF_HOME", str(HF_HOME))
 os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE))
 os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-# O Prefect Pony XL V6 é um checkpoint SDXL single-file fp16. O carregador
-# usa apenas o arquivo Civitai e mantém o cache de modelos separado do estúdio.
+# O Nova EXAnime AM é um modelo Anima bf16. O carregador correto é o
+# UNETLoader nativo do ComfyUI; o arquivo fica no diretório diffusion_models.
 MODELS = ROOT / "models"
 LORAS = ROOT / "loras"
 OUTPUTS = ROOT / "outputs"
@@ -62,11 +62,11 @@ for directory in (MODELS, LORAS, OUTPUTS, UPLOADS, HF_HUB_CACHE):
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MAX_LORAS = 3
 MODEL_URL = os.environ.get(
-    "MODEL_URL", "https://civitai.com/api/download/models/2114187?fileId=2008663"
+    "MODEL_URL", "https://civitai.com/api/download/models/3226184?fileId=3108312"
 )
 MODEL_REPO = os.environ.get("MODEL_REPO", "")
-MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "prefect_pony_v6.fp16.safetensors"))
-DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "prefect-pony-xl-v6")
+MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "diffusion_models" / "novaExanimeAM_v10.safetensors"))
+DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "nova-exanime-am")
 MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "ModelLabStudio")
 CIVITAI_BASE = "https://civitai.com/api/v1"
 LAST_SETTINGS_NAME = "last_settings.json"
@@ -75,6 +75,15 @@ MODEL_PROFILE_CACHE = ROOT / "model_profiles.json"
 # A família controla tanto a busca de LoRAs quanto os defaults enviados ao motor.
 
 MODEL_FAMILY_PROFILES: dict[str, dict[str, Any]] = {
+    "anima": {
+        "base": "Anima", "engine": "comfyui", "lora_base": "Anima",
+        "defaults": {
+            "steps": 24, "guidance": 5.0, "strength": 0.75, "sampler": "euler_a",
+            "positive_prefix": "masterpiece, best quality, score_9, score_8, score_7, year 2025, newest, highres, absurdres, very aesthetic",
+            "negative_prompt": "worst quality, low quality, early, old, score_1, score_2, score_3, cartoon, graphic, painting, crayon, graphite, abstract, glitch, deformed, mutated, ugly, disfigured, long body, bad anatomy, bad hands, missing fingers, extra fingers, extra digits, fewer digits, cropped, very displeasing, artist name, blurry, jpeg artifacts, lowres, censor",
+        },
+        "notes": "Nova EXAnime AM; Anima B1 + A11. Usa o workflow nativo do ComfyUI, sem Diffusers/SDXL.",
+    },
     "sdxl-illustrious": {
         "base": "Illustrious", "engine": "sdxl", "lora_base": "Illustrious",
         "defaults": {"steps": 28, "guidance": 6.5, "strength": 0.65, "sampler": "euler_a"},
@@ -107,6 +116,8 @@ SUPPORTED_SAMPLERS = {"euler_a", "euler", "dpmpp_2m", "dpmpp_2m_sde_gpu"}
 
 def normalize_model_family(base_model: str | None) -> str:
     value = re.sub(r"[^a-z0-9]+", " ", str(base_model or "").lower()).strip()
+    if "anima" in value:
+        return "anima"
     if "pony" in value:
         return "pony"
     if "illustrious" in value or "noobai" in value or "noob ai" in value:
@@ -142,11 +153,11 @@ def version_matches_family(version: dict[str, Any], family: str | None) -> bool:
 
 def _load_model_specs() -> dict[str, dict[str, Any]]:
     """Carrega checkpoints com perfil de família e defaults adaptativos."""
-    default_family = os.environ.get("MODEL_FAMILY", "pony").strip().lower()
+    default_family = os.environ.get("MODEL_FAMILY", "anima").strip().lower()
     base_profile = family_profile(default_family)
     default = {
         "id": DEFAULT_MODEL_ID,
-        "name": "Prefect Pony XL V6" if DEFAULT_MODEL_ID == "prefect-pony-xl-v6" else DEFAULT_MODEL_ID,
+        "name": "Nova EXAnime AM" if DEFAULT_MODEL_ID == "nova-exanime-am" else DEFAULT_MODEL_ID,
         "url": MODEL_URL,
         "repo": MODEL_REPO,
         "path": str(MODEL_PATH),
@@ -156,8 +167,8 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
         "lora_base": base_profile["lora_base"],
         "defaults": dict(base_profile["defaults"]),
         "notes": base_profile["notes"],
-        "civitai_model_id": 439889 if DEFAULT_MODEL_ID == "prefect-pony-xl-v6" else None,
-        "version_id": 2114187 if DEFAULT_MODEL_ID == "prefect-pony-xl-v6" else None,
+        "civitai_model_id": 2856434 if DEFAULT_MODEL_ID == "nova-exanime-am" else None,
+        "version_id": 3226184 if DEFAULT_MODEL_ID == "nova-exanime-am" else None,
     }
     specs: dict[str, dict[str, Any]] = {DEFAULT_MODEL_ID: default}
     raw = os.environ.get("MODELS_CONFIG", "").strip()
@@ -233,7 +244,7 @@ def get_model_spec(model_id: str | None = None) -> dict[str, Any]:
 def public_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
     family = str(spec.get("family", "sdxl"))
     engine = str(spec.get("engine") or family_profile(family).get("engine", "unsupported"))
-    ready = engine == "sdxl"
+    ready = engine == "comfyui"
     return {
         "id": spec["id"], "name": spec.get("name", spec["id"]),
         "family": family, "base": spec.get("base", family_profile(family)["base"]),
@@ -596,132 +607,81 @@ class MegaArchive:
 
 
 class GeneratorEngine:
-    """Carrega o checkpoint uma única vez e aplica LoRAs somente durante o job ativo."""
+    """Executa o workflow Anima no backend ComfyUI, sem abrir a UI ou descarregar o modelo."""
 
     def __init__(self) -> None:
+        from comfy_backend import ComfyBackend
+
         self.pipe = None
         self.img_pipe = None
         self.device = "cuda"
         self.loaded_model_id: str | None = None
         self.load_lock = threading.Lock()
+        comfy_root = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime"))
+        self.comfy = ComfyBackend(ROOT, comfy_root, int(os.environ.get("COMFY_PORT", "8188")))
+
+    @staticmethod
+    def _vram() -> float | None:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return round(torch.cuda.memory_allocated() / (1024**3), 2)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _extract_first_image(result: Any) -> Image.Image:
+        """Mantém o extrator de contrato para resultados de pipelines e dicionários."""
+        images = getattr(result, "images", None)
+        if images is None and isinstance(result, dict):
+            images = result.get("images")
+        if not images:
+            raise RuntimeError("O backend não retornou nenhuma imagem.")
+        image = images[0]
+        if not isinstance(image, Image.Image):
+            raise RuntimeError("O backend retornou uma imagem em formato não suportado.")
+        return image.convert("RGB")
 
     def ensure_checkpoint(self, spec: dict[str, Any], progress: Callable[[int], None] | None = None) -> Path:
         report = progress or (lambda _value: None)
         model_path = Path(spec["path"]).expanduser()
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        if model_path.exists() and model_path.stat().st_size > 500 * 1024 * 1024:
-            report(100)
-            return model_path
         url = str(spec.get("url") or "").strip()
         if not url:
-            raise RuntimeError(f"O checkpoint {spec.get('name', spec['id'])} não está no cache e não possui URL de download.")
-        target = model_path.with_suffix(model_path.suffix + ".part")
-        resume_at = target.stat().st_size if target.exists() else 0
-        headers = civitai_headers()
-        if resume_at:
-            headers["Range"] = f"bytes={resume_at}-"
-        with requests.get(url, headers=headers, stream=True, timeout=(15, 180)) as response:
-            response.raise_for_status()
-            append = bool(resume_at and response.status_code == 206)
-            if not append:
-                resume_at = 0
-            try:
-                content_length = int(response.headers.get("Content-Length", "0"))
-            except (TypeError, ValueError):
-                content_length = 0
-            total_bytes = content_length + resume_at if append and content_length else content_length
-            downloaded_bytes = resume_at
-            last_progress = -1
-            with target.open("ab" if append else "wb") as handle:
-                for chunk in response.iter_content(1024 * 1024):
-                    if chunk:
-                        handle.write(chunk)
-                        downloaded_bytes += len(chunk)
-                        if total_bytes:
-                            current = min(99, int(downloaded_bytes * 100 / total_bytes))
-                            if current != last_progress:
-                                report(current)
-                                last_progress = current
-        if target.stat().st_size < 500 * 1024 * 1024:
-            raise RuntimeError("O checkpoint baixado parece incompleto; tente novamente; o arquivo parcial será retomado.")
-        target.replace(model_path)
-        report(100)
-        return model_path
+            raise RuntimeError(f"O checkpoint {spec.get('name', spec['id'])} não possui URL de download.")
+        return self.comfy.ensure_file(url, model_path, 3_000 * 1024 * 1024, report)
 
     @staticmethod
-    def _configure_memory_savers(pipeline: Any) -> None:
-        """Configura economia de VRAM para pipelines DiffusionPipeline clássicas."""
-        if hasattr(pipeline, "enable_attention_slicing"):
-            pipeline.enable_attention_slicing(slice_size="auto")
-        if hasattr(pipeline, "enable_model_cpu_offload"):
-            pipeline.enable_model_cpu_offload()
-        vae = getattr(pipeline, "vae", None)
-        if vae is not None:
-            if hasattr(vae, "enable_tiling"):
-                vae.enable_tiling()
-            if hasattr(vae, "enable_slicing"):
-                vae.enable_slicing()
+    def _is_unsupported_lora_key(key: str) -> bool:
+        return key.startswith("lora_") and key.endswith(".alpha")
 
-    def _release_pipeline(self) -> None:
-        self.pipe = None
-        self.img_pipe = None
-        self.loaded_model_id = None
+    @classmethod
+    def _prepare_lora_file(cls, source: Path) -> Path:
+        """Remove apenas metadados alpha legados que quebram loaders de LoRA."""
+        compatible = source.with_name(f"{source.stem}_compatible{source.suffix}")
+        if compatible.exists() and compatible.stat().st_mtime >= source.stat().st_mtime:
+            return compatible
         try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-
-    def _load_pipeline(self, spec: dict[str, Any], update: Callable[..., None] | None = None) -> None:
-        report = update or (lambda *_args, **_kwargs: None)
-        if self.pipe is not None and self.loaded_model_id == spec["id"]:
-            report(0, self._vram(), download=100, pipeline=100, phase="pipeline_ready")
-            return
-        if self.pipe is not None:
-            self._release_pipeline()
-        import torch
-
-        if not torch.cuda.is_available():
-            raise RuntimeError("Nenhuma GPU CUDA foi detectada. Ative uma sessão T4 no Colab e reinicie o servidor.")
-        engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
-
-        if engine != "sdxl":
-            raise RuntimeError(f"Engine {engine!r} ainda não está disponível para geração.")
-        report(0, self._vram(), download=0, pipeline=0, phase="checking_model")
-        model_path = self.ensure_checkpoint(
-            spec,
-            lambda value: report(0, self._vram(), download=value, pipeline=0, phase="downloading_model"),
-        )
-        report(0, self._vram(), download=100, pipeline=10, phase="loading_pipeline")
-        from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
+            from safetensors import safe_open
+            from safetensors.torch import save_file
+        except ImportError as exc:
+            raise RuntimeError("A dependência safetensors é necessária para preparar esta LoRA.") from exc
+        with safe_open(str(source), framework="pt", device="cpu") as handle:
+            keys = list(handle.keys())
+            unsupported = [key for key in keys if cls._is_unsupported_lora_key(key)]
+            if not unsupported:
+                return source
+            tensors = {key: handle.get_tensor(key) for key in keys if key not in unsupported}
+            metadata = handle.metadata() or {}
+        temporary = compatible.with_suffix(".part")
+        temporary.unlink(missing_ok=True)
         try:
-            self.pipe = StableDiffusionXLPipeline.from_single_file(
-                str(model_path), torch_dtype=torch.float16, use_safetensors=True
-            )
-            report(0, self._vram(), download=100, pipeline=65, phase="configuring_pipeline")
-            self._configure_memory_savers(self.pipe)
-            self.img_pipe = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
-            report(0, self._vram(), download=100, pipeline=88, phase="preparing_img2img")
-            self._configure_memory_savers(self.img_pipe)
-            self.loaded_model_id = spec["id"]
-            report(0, self._vram(), download=100, pipeline=100, phase="pipeline_ready")
+            save_file(tensors, str(temporary), metadata=metadata)
+            temporary.replace(compatible)
         except Exception:
-            self._release_pipeline()
+            temporary.unlink(missing_ok=True)
             raise
-
-    def _apply_sampler(self, sampler: str) -> None:
-        """Troca o scheduler somente quando a biblioteca instalada suportar a variante."""
-        if sampler not in SUPPORTED_SAMPLERS or self.pipe is None or self.img_pipe is None:
-            return
-        try:
-            from diffusers import DPMSolverMultistepScheduler, EulerAncestralDiscreteScheduler
-            scheduler_class = DPMSolverMultistepScheduler if sampler == "dpmpp_2m" else EulerAncestralDiscreteScheduler
-            self.pipe.scheduler = scheduler_class.from_config(self.pipe.scheduler.config)
-            self.img_pipe.scheduler = scheduler_class.from_config(self.img_pipe.scheduler.config)
-        except Exception:
-            # O checkpoint continua utilizável com o scheduler original.
-            return
+        return compatible
 
     def _download_lora(self, version_id: int) -> Path:
         destination = LORAS / f"civitai_{version_id}.safetensors"
@@ -733,7 +693,7 @@ class GeneratorEngine:
         with requests.get(url, headers=civitai_headers(), stream=True, timeout=(15, 180)) as response:
             response.raise_for_status()
             with temporary.open("wb") as handle:
-                for chunk in response.iter_content(1024 * 1024):
+                for chunk in response.iter_content(4 * 1024 * 1024):
                     if chunk:
                         handle.write(chunk)
         if temporary.stat().st_size < 1024 * 1024:
@@ -742,147 +702,56 @@ class GeneratorEngine:
         temporary.replace(destination)
         return destination
 
-    @staticmethod
-    def _is_unsupported_lora_key(key: str) -> bool:
-        """Identifica o metadado alpha que o conversor SGM do Diffusers rejeita."""
-        return key.startswith("lora_") and key.endswith(".alpha")
-
-    @classmethod
-    def _prepare_lora_file(cls, source: Path) -> Path:
-        """Cria uma cópia compatível quando a LoRA traz chaves alpha legadas."""
-        compatible = source.with_name(f"{source.stem}_compatible{source.suffix}")
-        if compatible.exists() and compatible.stat().st_mtime >= source.stat().st_mtime:
-            return compatible
-
-        try:
-            from safetensors import safe_open
-            from safetensors.torch import save_file
-        except ImportError as exc:
-            raise RuntimeError("A dependência safetensors é necessária para preparar esta LoRA.") from exc
-
-        with safe_open(str(source), framework="pt", device="cpu") as handle:
-            keys = list(handle.keys())
-            unsupported = [key for key in keys if cls._is_unsupported_lora_key(key)]
-            if not unsupported:
-                return source
-            tensors = {key: handle.get_tensor(key) for key in keys if key not in unsupported}
-            metadata = handle.metadata() or {}
-
-        temporary = compatible.with_suffix(".part")
-        temporary.unlink(missing_ok=True)
-        try:
-            save_file(tensors, str(temporary), metadata=metadata)
-            temporary.replace(compatible)
-        except Exception:
-            temporary.unlink(missing_ok=True)
-            raise
-        return compatible
-
-    @staticmethod
-    def _vram() -> float | None:
-        try:
-            import torch
-            return round(torch.cuda.memory_allocated() / (1024**3), 2)
-        except Exception:
-            return None
-
-    @staticmethod
-    def _extract_first_image(result: Any) -> Image.Image:
-        """Obtém a primeira imagem das saídas padrão dos pipelines Diffusers."""
-        images = getattr(result, "images", None)
-        if images is None and isinstance(result, dict):
-            images = result.get("images")
-        if not images:
-            raise RuntimeError("O pipeline não retornou nenhuma imagem.")
-        image = images[0]
-        if not isinstance(image, Image.Image):
-            raise RuntimeError("O pipeline retornou uma imagem em formato não suportado.")
-        return image.convert("RGB")
+    def _load_pipeline(self, spec: dict[str, Any], update: Callable[..., None] | None = None) -> None:
+        report = update or (lambda *_args, **_kwargs: None)
+        engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
+        if engine != "comfyui":
+            raise RuntimeError(f"O perfil {spec.get('name', spec['id'])} não usa o engine ComfyUI Anima.")
+        if self.loaded_model_id == spec["id"]:
+            report(0, self._vram(), download=100, pipeline=100, phase="pipeline_ready")
+            return
+        if not self.comfy.comfy_dir.joinpath("main.py").exists():
+            raise RuntimeError("ComfyUI não está instalado. Execute launch_colab.py novamente.")
+        if not __import__("torch").cuda.is_available():
+            raise RuntimeError("Nenhuma GPU CUDA foi detectada. Ative uma sessão T4 no Colab.")
+        report(0, self._vram(), download=0, pipeline=0, phase="checking_model")
+        model_path = Path(spec["path"]).expanduser()
+        self.comfy.ensure_file(
+            str(spec["url"]), model_path, 3_000 * 1024 * 1024,
+            lambda value: report(0, self._vram(), download=value, pipeline=0, phase="downloading_model"),
+        )
+        report(0, self._vram(), download=100, pipeline=15, phase="downloading_anima_components")
+        self.comfy.ensure_anima_dependencies(
+            lambda _progress, _vram, _pipeline, phase: report(0, self._vram(), download=100, pipeline=20, phase=phase)
+        )
+        report(0, self._vram(), download=100, pipeline=70, phase="starting_comfy_backend")
+        self.comfy.ensure_running()
+        self.loaded_model_id = spec["id"]
+        report(0, self._vram(), download=100, pipeline=100, phase="pipeline_ready")
 
     def generate(self, job: Job, update: Callable[..., None]) -> Path:
-        import torch
-
         with self.load_lock:
             spec = get_model_spec(job.params.model_id)
+            if job.params.mode != "text2img":
+                raise RuntimeError("O workflow Anima atual é text2img; img2img ainda não está disponível neste backend.")
             self._load_pipeline(spec, update)
-            assert self.pipe is not None
-            self._apply_sampler(job.params.sampler)
-            if job.params.mode == "img2img":
-                if self.img_pipe is None:
-                    raise RuntimeError("O pipeline img2img não está disponível para o modelo selecionado.")
-                pipeline = self.img_pipe
-            else:
-                pipeline = self.pipe
-            try:
-                try:
-                    self.pipe.unload_lora_weights()
-                except Exception:
-                    pass
-
-                update(0, self._vram(), download=100, pipeline=100, phase="preparing_loras")
-                adapters: list[str] = []
-                weights: list[float] = []
-                for index, selected in enumerate(job.params.loras):
-                    downloaded = self._download_lora(selected.version_id)
-                    path = self._prepare_lora_file(downloaded)
-                    adapter = f"lora_{index}_{selected.version_id}"
-                    try:
-                        self.pipe.load_lora_weights(str(path), adapter_name=adapter)
-                    except ValueError as exc:
-                        if "Checkpoint not supported because layer" in str(exc):
-                            raise RuntimeError(
-                                f"A LoRA '{selected.name}' não é compatível com a família {spec.get('base', spec.get('family', 'selecionada'))}."
-                            ) from exc
-                        raise
-                    adapters.append(adapter)
-                    weights.append(selected.weight)
-                if adapters:
-                    self.pipe.set_adapters(adapters, adapter_weights=weights)
-
-                generator = torch.Generator(device="cuda").manual_seed(job.params.seed)
-                callback_steps = max(job.params.steps, 1)
-
-                def progress_callback(_: Any, step: int, __: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
-                    update(
-                        min(98, int((step + 1) * 100 / callback_steps)),
-                        self._vram(),
-                        download=100,
-                        pipeline=100,
-                        phase="generating",
-                    )
-                    return callback_kwargs
-
-                options: dict[str, Any] = {
-                    "prompt": job.params.prompt,
-                    "negative_prompt": job.params.negative_prompt,
-                    "num_inference_steps": job.params.steps,
-                    "generator": generator,
-                }
-                options.update({
-                    "guidance_scale": job.params.guidance,
-                    "callback_on_step_end": progress_callback,
-                })
-                if job.params.mode == "img2img":
-                    if not job.params.source_image:
-                        raise RuntimeError("O modo img2img requer uma imagem-base.")
-                    with Image.open(job.params.source_image) as source:
-                        options["image"] = source.convert("RGB")
-                        options["strength"] = job.params.strength
-                        result = self._extract_first_image(pipeline(**options))
-                else:
-                    options.update({"width": job.params.width, "height": job.params.height})
-                    result = self._extract_first_image(pipeline(**options))
-
-                output = OUTPUTS / f"{job.id}.png"
-                result.save(output, format="PNG")
-                update(100, self._vram(), download=100, pipeline=100, phase="completed")
-                return output
-            finally:
-                try:
-                    self.pipe.unload_lora_weights()
-                except Exception:
-                    pass
-                torch.cuda.empty_cache()
+            update(0, self._vram(), download=100, pipeline=100, phase="preparing_loras")
+            lora_names: list[tuple[str, float]] = []
+            for selected in job.params.loras:
+                downloaded = self._prepare_lora_file(self._download_lora(selected.version_id))
+                lora_names.append((self.comfy.copy_lora(downloaded), selected.weight))
+            workflow = self.comfy.build_workflow(job, spec, Path(spec["path"]).name, lora_names)
+            update(0, self._vram(), download=100, pipeline=100, phase="generating")
+            image = self.comfy.submit_and_wait(
+                workflow,
+                lambda progress, vram, _pipeline, phase: update(
+                    progress, vram, download=100, pipeline=100, phase=phase
+                ),
+            )
+            output = OUTPUTS / f"{job.id}.png"
+            image.save(output, format="PNG")
+            update(100, self._vram(), download=100, pipeline=100, phase="completed")
+            return output
 
 
 class JobManager:
@@ -1041,7 +910,8 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     engine = str(model_spec.get("engine") or family_profile(family).get("engine", "unsupported"))
     if engine == "unsupported":
         raise ValueError(f"O modelo selecionado pertence à família {family}, mas esse engine ainda não está configurado no ModelLab.")
-    sampler = str(raw.get("sampler") or model_spec.get("defaults", {}).get("sampler", "euler_a")).strip().lower()
+    defaults = model_spec.get("defaults", {})
+    sampler = str(raw.get("sampler") or defaults.get("sampler", "euler_a")).strip().lower()
     if sampler not in SUPPORTED_SAMPLERS:
         raise ValueError("Sampler não suportado pelo perfil atual.")
     prompt = str(raw.get("prompt", "")).strip()
@@ -1051,11 +921,11 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
         seed = int(raw.get("seed", -1))
         if seed < 0:
             seed = int.from_bytes(os.urandom(4), "big")
-        steps = int(raw.get("steps", 28))
+        steps = int(raw.get("steps", defaults.get("steps", 28)))
         width = int(raw.get("width", 1024))
         height = int(raw.get("height", 1024))
-        guidance = float(raw.get("guidance", 6.5))
-        strength = float(raw.get("strength", 0.65))
+        guidance = float(raw.get("guidance", defaults.get("guidance", 6.5)))
+        strength = float(raw.get("strength", defaults.get("strength", 0.65)))
     except (TypeError, ValueError) as exc:
         raise ValueError("Há um parâmetro numérico inválido.") from exc
     if not 10 <= steps <= 60 or not 1 <= guidance <= 15 or not 0.05 <= strength <= 1:
@@ -1063,6 +933,8 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     size_min, size_max = 512, 1024
     if width not in range(size_min, size_max + 1, 64) or height not in range(size_min, size_max + 1, 64):
         raise ValueError(f"Largura e altura devem ser múltiplos de 64 entre {size_min} e {size_max}.")
+    if family == "anima" and mode != "text2img":
+        raise ValueError("Nova EXAnime AM usa o workflow Anima text2img; img2img ainda não está disponível.")
     if mode == "img2img" and not source_image:
         raise ValueError("Envie uma imagem-base para usar img2img.")
     parsed_loras: list[LoRASelection] = []
@@ -1129,6 +1001,16 @@ def bootstrap():
         "limits": {"maxLoras": MAX_LORAS, "sizes": list(range(512, 1025, 64))},
         "models": [public_model_spec(spec) for spec in MODEL_SPECS.values()],
         "model": public_model_spec(get_model_spec()),
+    })
+
+
+@app.route("/api/comfy-health")
+@authentication_required
+def comfy_health():
+    return jsonify({
+        "backend": "comfyui-headless",
+        "model": public_model_spec(get_model_spec()),
+        "comfy": engine.comfy.status(),
     })
 
 
@@ -1207,6 +1089,8 @@ def model_profile():
     except (TypeError, ValueError):
         return jsonify({"error": "Modelo Civitai inválido."}), 400
     family = normalize_model_family(payload.get("family") or payload.get("base_model"))
+    if family != "anima":
+        return jsonify({"error": "Este projeto está configurado para Nova EXAnime AM/Anima; selecione um modelo baseado em Anima."}), 400
     profile = family_profile(family)
     model_id = re.sub(r"[^a-z0-9._-]+", "-", f"civitai-{civitai_model_id}-{version_id}".lower()).strip("-")
     spec = {
@@ -1214,8 +1098,9 @@ def model_profile():
         "url": f"https://civitai.com/api/download/models/{version_id}",
         "path": str(MODELS / f"{model_id}.safetensors"), "family": family,
         "base": str(payload.get("base_model") or profile["base"]),
-        "engine": "sdxl",
-        "lora_base": profile["lora_base"], "defaults": {**profile["defaults"], **(payload.get("defaults") or {})},
+                "engine": profile["engine"],
+        "lora_base": profile["lora_base"],
+ "defaults": {**profile["defaults"], **(payload.get("defaults") or {})},
         "notes": profile["notes"], "civitai_model_id": civitai_model_id, "version_id": version_id,
     }
     MODEL_SPECS[model_id] = spec
@@ -1233,9 +1118,9 @@ def catalog():
     include_adult = request.args.get("include_adult", "").strip().lower() in {"1", "true", "yes"}
     if include_adult and not os.environ.get("CIVITAI_TOKEN", "").strip():
         return jsonify({"error": "Defina CIVITAI_TOKEN no servidor para consultar conteúdo adulto autorizado."}), 400
-    family = request.args.get("family", "pony").strip().lower()
+    family = request.args.get("family", "anima").strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
-        family = "pony"
+        family = "anima"
     params: dict[str, Any] = {
         "limit": min(max(int(request.args.get("limit", 24)), 1), 48), "types": "LORA",
         "baseModels": civitai_base_for_family(family), "sort": request.args.get("sort", "Most Downloaded"),
@@ -1311,9 +1196,9 @@ def prompt_store():
     except (requests.RequestException, ValueError) as exc:
         return jsonify({"error": f"Não foi possível consultar a Loja de Prompts no Civitai: {str(exc)[:160]}"}), 502
 
-    family = request.args.get("family", "pony").strip().lower()
+    family = request.args.get("family", "anima").strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
-        family = "pony"
+        family = "anima"
     search = request.args.get("query", "").strip().lower()[:120]
     filters = [term.strip().lower() for term in request.args.get("filters", "").split(",") if term.strip()][:8]
     items: list[dict[str, Any]] = []

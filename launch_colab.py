@@ -24,6 +24,9 @@ import requests
 APP_DIR = Path(__file__).resolve().parent
 PORT = os.environ.get("PORT", "7860")
 SERVER_START_TIMEOUT = float(os.environ.get("SERVER_START_TIMEOUT", "180"))
+COMFYUI_DIR = Path(os.environ.get("COMFYUI_DIR", "/content/ComfyUI"))
+COMFYUI_REPO = os.environ.get("COMFYUI_REPO", "https://github.com/comfyanonymous/ComfyUI.git")
+COMFYUI_COMMIT = os.environ.get("COMFYUI_COMMIT", "c1739380c6fab78e7e263cb665d04aafbfe24593")
 TUNNEL_PATTERN = re.compile(r"https://[-a-z0-9]+\.(?:ngrok-free\.app|ngrok\.io)", re.I)
 
 
@@ -38,50 +41,59 @@ def ask_secret(name: str, prompt: str, required: bool = True) -> None:
 
 
 def install_requirements() -> None:
-    print("[setup] Atualizando a matriz direta Diffusers/Transformers/PEFT do estúdio…")
+    print("[setup] Atualizando as dependências diretas do estúdio sem tocar no PyTorch/CUDA…")
     subprocess.run([
         sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--no-deps",
         "-r", str(APP_DIR / "requirements.txt"),
     ], check=True)
+    print("[setup] Instalando dependências do ComfyUI sem substituir torch, torchvision ou torchaudio…")
+    subprocess.run([
+        sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--no-deps",
+        "-r", str(APP_DIR / "comfy_requirements.txt"),
+    ], check=True)
+
+
+def ensure_comfyui() -> None:
+    """Instala uma revisão conhecida do backend sem abrir o frontend."""
+    COMFYUI_DIR.parent.mkdir(parents=True, exist_ok=True)
+    if not (COMFYUI_DIR / ".git").exists():
+        print(f"[setup] Clonando ComfyUI em {COMFYUI_DIR}…")
+        subprocess.run(["git", "clone", "--filter=blob:none", COMFYUI_REPO, str(COMFYUI_DIR)], check=True)
+    current = subprocess.check_output(["git", "-C", str(COMFYUI_DIR), "rev-parse", "HEAD"], text=True).strip()
+    if current != COMFYUI_COMMIT:
+        print(f"[setup] Fixando ComfyUI em {COMFYUI_COMMIT}…")
+        subprocess.run(["git", "-C", str(COMFYUI_DIR), "fetch", "--depth", "1", "origin", COMFYUI_COMMIT], check=True)
+        subprocess.run(["git", "-C", str(COMFYUI_DIR), "checkout", "--detach", COMFYUI_COMMIT], check=True)
+    print(f"[setup] ComfyUI headless fixado em {COMFYUI_COMMIT[:12]}.")
 
 
 def validate_runtime() -> None:
-    """Falha cedo quando a sessão Colab mantém uma combinação incompatível para LoRA."""
+    """Valida o runtime necessário ao loader nativo Anima/ComfyUI."""
     import torch
-    import diffusers
-    import peft
     try:
         from Crypto.Cipher import AES
     except ModuleNotFoundError as error:
         raise RuntimeError(
             "PyCryptodome não foi carregado; reinicie o runtime Colab e execute a célula novamente."
         ) from error
-
-    expected_peft = "0.17.0"
-    installed_peft = importlib.metadata.version("peft")
-    if installed_peft != expected_peft:
-        raise RuntimeError(
-            f"PEFT incompatível: encontrado {installed_peft}, esperado {expected_peft}. "
-            "Reinicie o ambiente Colab e execute esta célula novamente."
-        )
     if not torch.cuda.is_available():
         raise RuntimeError("GPU CUDA não encontrada. Selecione T4 no Colab e reinicie o ambiente.")
     from packaging.version import Version
-    diffusers_version = Version(diffusers.__version__)
-    if diffusers_version < Version("0.39.0"):
-        raise RuntimeError(
-            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline SDXL/Pony. "
-            "Reinicie o ambiente Colab e execute esta célula novamente."
-        )
     transformers_version = Version(importlib.metadata.version("transformers"))
     if transformers_version < Version("4.51.0"):
         raise RuntimeError(
-            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para o pipeline SDXL/Pony. "
+            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para o encoder Qwen do Anima. "
+            "Reinicie o ambiente Colab e execute esta célula novamente."
+        )
+    safetensors_version = Version(importlib.metadata.version("safetensors"))
+    if safetensors_version < Version("0.8.0"):
+        raise RuntimeError(
+            f"Safetensors incompatível: encontrado {safetensors_version}, mínimo 0.8.0 para o loader Anima. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     print(
-        f"[setup] Runtime validado: torch={torch.__version__}, diffusers={diffusers.__version__}, "
-        f"transformers={transformers_version}, peft={peft.__version__}, crypto=AES"
+        f"[setup] Runtime validado: torch={torch.__version__}, transformers={transformers_version}, "
+        f"safetensors={safetensors_version}, crypto=AES"
     )
 
 
@@ -152,8 +164,8 @@ def main() -> None:
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
 
-    # Configuração técnica padronizada: Prefect Pony XL V6 é um checkpoint
-    # SDXL single-file fp16 e pode ser carregado diretamente pelo Diffusers.
+    # Configuração técnica padronizada: Nova EXAnime AM é Anima bf16;
+    # o loader nativo do ComfyUI faz o cast FP16 compatível com a T4.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
     if "HF_HOME" not in os.environ:
         legacy_hf_home = Path.home() / ".cache" / "huggingface"
@@ -165,14 +177,19 @@ def main() -> None:
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
     # Substitui defaults antigos persistidos no runtime; perfis customizados ainda
     # podem ser fornecidos por MODELS_CONFIG.
-    os.environ["MODEL_ID"] = "prefect-pony-xl-v6"
-    os.environ["MODEL_URL"] = "https://civitai.red/api/download/models/2114187?fileId=2008663"
+    os.environ["MODEL_ID"] = "nova-exanime-am"
+    os.environ["MODEL_URL"] = "https://civitai.com/api/download/models/3226184?fileId=3108312"
     os.environ["MODEL_REPO"] = ""
-    os.environ["MODEL_PATH"] = f"{os.environ["STUDIO_ROOT"]}/models/prefect_pony_v6.fp16.safetensors"
-    os.environ["MODEL_FAMILY"] = "pony"
-    print("[setup] Perfil Prefect Pony XL V6 padronizado; SDXL single-file + cache HTTP/HF configurados.")
+    os.environ["MODEL_PATH"] = f"{os.environ['STUDIO_ROOT']}/models/diffusion_models/novaExanimeAM_v10.safetensors"
+    os.environ["MODEL_FAMILY"] = "anima"
+    os.environ["COMFYUI_DIR"] = str(COMFYUI_DIR)
+    # O base-directory do ComfyUI coincide com STUDIO_ROOT para compartilhar
+    # models/diffusion_models, models/text_encoders e models/vae.
+    os.environ["COMFY_ROOT"] = os.environ["STUDIO_ROOT"]
+    print("[setup] Perfil Nova EXAnime AM padronizado; backend ComfyUI headless e modelo residente na GPU configurados.")
 
     install_requirements()
+    ensure_comfyui()
     validate_runtime()
     ngrok = ensure_ngrok()
     configure_ngrok(ngrok)
