@@ -618,7 +618,10 @@ class GeneratorEngine:
         self.loaded_model_id: str | None = None
         self.load_lock = threading.Lock()
         comfy_root = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime"))
-        self.comfy = ComfyBackend(ROOT, comfy_root, int(os.environ.get("COMFY_PORT", "8188")))
+        # O custom node vive junto ao código do projeto; o ComfyUI/modelos vivem
+        # no diretório persistente STUDIO_ROOT/COMFY_ROOT.
+        project_root = Path(__file__).resolve().parent
+        self.comfy = ComfyBackend(project_root, comfy_root, int(os.environ.get("COMFY_PORT", "8188")))
 
     @staticmethod
     def _vram() -> float | None:

@@ -81,7 +81,7 @@ Os samplers aceitos pelo contrato atual são `euler_a`, `euler`, `dpmpp_2m` e `d
 
 O processo do ComfyUI é iniciado em segundo plano com `--disable-auto-launch` e não abre a interface. O servidor do ModelLab envia workflows API para `POST http://127.0.0.1:8188/prompt` e acompanha a conclusão pelo histórico/WebSocket. O perfil residente usa `--gpu-only`, `--highvram`, `--force-fp16`, `--fp16-intermediates` e `--cache-none`; não usa `--lowvram`, `--cpu-vae`, `--novram` ou `/free`, pois essas opções descarregariam componentes ou trocariam VRAM por RAM.
 
-O node `ModelLabMemoryCleanup` é executado ao final do workflow e libera apenas temporários e blocos CUDA ociosos. Ele não remove referências ao checkpoint, ao Qwen ou ao VAE carregados. Isso preserva o modelo na GPU, embora picos de RAM do Colab ainda dependam do caminho de execução de cada geração. O servidor expõe `GET /api/comfy-health` para verificar backend, fila e VRAM sem acessar a UI.
+O node `ModelLabMemoryCleanup` é copiado automaticamente da pasta do código para `COMFYUI_DIR/custom_nodes/modellab_memory.py` antes de o backend iniciar. Ele é executado ao final do workflow e libera apenas temporários e blocos CUDA ociosos; não remove referências ao checkpoint, ao Qwen ou ao VAE carregados. O servidor expõe `GET /api/comfy-health`, incluindo `memory_node_available`, para verificar backend, fila e carregamento do node sem acessar a UI. Se uma instância antiga do ComfyUI estiver residente sem o node, o servidor usa um workflow de fallback sem cleanup em vez de falhar; reinicie o processo para ativar a otimização.
 
 ## Arquivo persistente e exclusão
 

@@ -48,6 +48,7 @@ class ComfyBackend:
         self.client_id = str(uuid.uuid4())
         self.timeout = float(os.environ.get("COMFY_JOB_TIMEOUT", "3600"))
         self.model_lock = threading.Lock()
+        self.memory_node_available: bool | None = None
 
     @property
     def model_dir(self) -> Path:
@@ -104,6 +105,17 @@ class ComfyBackend:
             command.extend(shlex.split(extra))
         return command
 
+    def _memory_node_loaded(self) -> bool | None:
+        """Consulta object_info sem iniciar ou descarregar o ComfyUI."""
+        try:
+            response = self.session.get(f"{self.base_url}/object_info", timeout=5)
+            if not response.ok:
+                return None
+            objects = response.json()
+            return "ModelLabMemoryCleanup" in objects
+        except (requests.RequestException, ValueError):
+            return None
+
     def _reachable(self) -> bool:
         try:
             response = self.session.get(f"{self.base_url}/system_stats", timeout=2)
@@ -113,16 +125,20 @@ class ComfyBackend:
 
     def ensure_running(self) -> None:
         with self.start_lock:
+            # O node precisa ser copiado mesmo se houver um processo antigo
+            # residente; nesse caso ele só ficará disponível após reinício.
+            self._ensure_directories()
+            self._ensure_cleanup_node()
             if self._reachable():
+                self.memory_node_available = self._memory_node_loaded()
                 return
             if not (self.comfy_dir / "main.py").exists():
                 raise RuntimeError(
                     f"ComfyUI não encontrado em {self.comfy_dir}. Execute o launcher para instalar o backend."
                 )
-            self._ensure_directories()
-            self._ensure_cleanup_node()
             if self.process is not None and self.process.poll() is None:
                 self._wait_until_ready()
+                self.memory_node_available = self._memory_node_loaded()
                 return
             self.process = subprocess.Popen(
                 self._command(),
@@ -134,6 +150,7 @@ class ComfyBackend:
             )
             try:
                 self._wait_until_ready()
+                self.memory_node_available = self._memory_node_loaded()
             except Exception:
                 if self.process.poll() is None:
                     self.process.terminate()
@@ -264,6 +281,7 @@ class ComfyBackend:
         negative = job.params.negative_prompt or str(defaults.get("negative_prompt", ""))
         sampler_name, scheduler = self._sampler(job.params.sampler)
         model_node = "1"
+        use_memory_node = self.memory_node_available is not False
         workflow: dict[str, dict[str, Any]] = {
             "1": {
                 "class_type": "UNETLoader",
@@ -309,12 +327,16 @@ class ComfyBackend:
                 },
             },
             "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
-            "9": {"class_type": "ModelLabMemoryCleanup", "inputs": {"image": ["8", 0]}},
             "10": {
                 "class_type": "SaveImage",
-                "inputs": {"images": ["9", 0], "filename_prefix": f"modellab_{job.id}"},
+                "inputs": {"images": ["9" if use_memory_node else "8", 0], "filename_prefix": f"modellab_{job.id}"},
             },
         }
+        if use_memory_node:
+            workflow["9"] = {
+                "class_type": "ModelLabMemoryCleanup",
+                "inputs": {"image": ["8", 0]},
+            }
         for index, (lora_name, weight) in enumerate(lora_names, start=1):
             node_id = str(10 + index)
             workflow[node_id] = {
@@ -390,12 +412,15 @@ class ComfyBackend:
             "url": self.base_url,
             "process_alive": bool(self.process is not None and self.process.poll() is None),
             "reachable": False,
+            "memory_node_available": self.memory_node_available,
         }
         try:
             response = self.session.get(f"{self.base_url}/system_stats", timeout=3)
             payload["reachable"] = response.ok
             if response.ok:
                 payload["system"] = response.json()
+                self.memory_node_available = self._memory_node_loaded()
+                payload["memory_node_available"] = self.memory_node_available
             queue_response = self.session.get(f"{self.base_url}/queue", timeout=3)
             if queue_response.ok:
                 queue_payload = queue_response.json()

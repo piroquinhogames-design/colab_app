@@ -1,7 +1,16 @@
+import os
 from pathlib import Path
 from types import SimpleNamespace
+from tempfile import TemporaryDirectory
 
 from comfy_backend import ComfyBackend
+
+with TemporaryDirectory() as temporary:
+    install_root = Path(temporary)
+    os.environ['COMFYUI_DIR'] = str(install_root / 'comfy')
+    install_backend = ComfyBackend(Path(__file__).resolve().parent, install_root / 'runtime', 8188)
+    install_backend._ensure_cleanup_node()
+    assert (install_backend.comfy_dir / 'custom_nodes' / 'modellab_memory.py').exists()
 
 root = Path('/tmp/modellab-headless-test')
 backend = ComfyBackend(root, root / 'runtime', 8188)
@@ -30,8 +39,14 @@ assert workflow['11']['inputs']['model'] == ['1', 0]
 assert workflow['12']['inputs']['model'] == ['11', 0]
 assert workflow['9']['class_type'] == 'ModelLabMemoryCleanup'
 assert workflow['10']['inputs']['images'] == ['9', 0]
+backend.memory_node_available = False
+fallback = backend.build_workflow(job, spec, 'novaExanimeAM_v10.safetensors', [])
+assert '9' not in fallback
+assert fallback['10']['inputs']['images'] == ['8', 0]
+backend.memory_node_available = True
 command = backend._command()
 for flag in ('--disable-auto-launch', '--force-fp16', '--fp16-intermediates', '--gpu-only', '--highvram', '--cache-none'):
     assert flag in command, flag
 assert '--lowvram' not in command
+assert '--cpu-vae' not in command
 print('HEADLESS_WORKFLOW_OK')
