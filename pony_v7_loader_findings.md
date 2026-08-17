@@ -54,3 +54,17 @@ Fontes:
 1. https://huggingface.co/docs/huggingface_hub/en/guides/download
 2. https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables
 3. https://huggingface.co/docs/huggingface_hub/en/concepts/migration
+
+## Diagnóstico do snapshot lento — 2026-08-17
+
+A API pública de `purplesmartai/pony-v7-base` informa que o repositório Diffusers contém 7B parâmetros e vários arquivos grandes: `transformer/diffusion_pytorch_model-00001-of-00003.safetensors` (~9.99 GB), `00002` (~9.89 GB), `00003` (~7.55 GB), `text_encoder/model.fp16.safetensors` (~2.95 GB), VAE fp16 (~167 MB), além dos arquivos de configuração e tokenizer. O snapshot também contém variantes GGUF, o safetensor single-file de ~13.7 GB, imagens e workflows. O downloader atual filtra GGUF, single-file, imagens e formatos não usados, mas ainda precisa baixar os três shards do transformer e o text encoder para o pipeline Diffusers.
+
+A documentação oficial do Diffusers 0.39 lista os pipelines suportados por `from_single_file()` e não inclui `AuraFlowPipeline` na lista de pipelines single-file suportados. Portanto, não é seguro trocar diretamente para `AuraFlowPipeline.from_single_file()`; isso pode reproduzir o erro de componentes ausentes. O model card oficial recomenda `DiffusionPipeline.from_pretrained("purplesmartai/pony-v7-base", dtype=torch.bfloat16, device_map="cuda")` e identifica a arquitetura como AuraFlow.
+
+Fontes externas:
+1. https://huggingface.co/api/models/purplesmartai/pony-v7-base?blobs=true
+2. https://huggingface.co/docs/diffusers/en/api/loaders/single_file
+3. https://huggingface.co/purplesmartai/pony-v7-base
+4. https://civitai.com/articles/6309/towards-pony-diffusion-v7-going-with-the-flow
+
+O workflow oficial do Pony V7 descreve o GGUF como caminho otimizado para ComfyUI com nós `ComfyUI-GGUF` da City96; recomenda Q8_0. A documentação oficial do Diffusers informa que GGUF pode carregar classes de modelo via `from_single_file`, mas **não é suportado diretamente por pipelines**. Portanto, trocar apenas o repositório para `gguf/base-v7-Q4_0.gguf` não é compatível com o backend AuraFlow atual; para usar Q4/Q8 seria necessário migrar o motor de geração para ComfyUI ou implementar um pipeline AuraFlow quantizado específico.

@@ -50,6 +50,22 @@ HF_HUB_CACHE = Path(os.environ.get("HF_HUB_CACHE") or (HF_HOME / "hub")).resolve
 os.environ.setdefault("HF_HOME", str(HF_HOME))
 os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE))
 os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+# O Pony V7 publica shards F32 do transformer e artefatos de workflow que não são
+# necessários para o AuraFlow em fp16. O transformer é obtido do single-file do
+# Civitai; o snapshot auxiliar fica restrito a configs, T5, tokenizer e VAE.
+AURAFLOW_ALLOW_PATTERNS = [
+    "model_index.json",
+    "scheduler/*.json",
+    "text_encoder/config.json",
+    "text_encoder/model.fp16.safetensors",
+    "tokenizer/*.json",
+    "tokenizer/*.model",
+    "tokenizer/*.txt",
+    "transformer/*.json",
+    "vae/config.json",
+    "vae/*fp16.safetensors",
+]
+AURAFLOW_IGNORE_PATTERNS = ["*.bin", "*.ckpt", "*.pt", "*.onnx", "*.msgpack", "*.h5", "*.gguf", "*.webp", "*.png", "*.zip"]
 MODELS = ROOT / "models"
 LORAS = ROOT / "loras"
 OUTPUTS = ROOT / "outputs"
@@ -611,16 +627,21 @@ class GeneratorEngine:
         if not url:
             raise RuntimeError(f"O checkpoint {spec.get('name', spec['id'])} não está no cache e não possui URL de download.")
         target = model_path.with_suffix(model_path.suffix + ".part")
-        target.unlink(missing_ok=True)
-        with requests.get(url, headers=civitai_headers(), stream=True, timeout=(15, 180)) as response:
+        resume_at = target.stat().st_size if target.exists() else 0
+        headers = civitai_headers()
+        if resume_at:
+            headers["Range"] = f"bytes={resume_at}-"
+        with requests.get(url, headers=headers, stream=True, timeout=(15, 180)) as response:
             response.raise_for_status()
-            with target.open("wb") as handle:
+            append = bool(resume_at and response.status_code == 206)
+            if not append:
+                resume_at = 0
+            with target.open("ab" if append else "wb") as handle:
                 for chunk in response.iter_content(1024 * 1024):
                     if chunk:
                         handle.write(chunk)
         if target.stat().st_size < 500 * 1024 * 1024:
-            target.unlink(missing_ok=True)
-            raise RuntimeError("O checkpoint baixado parece incompleto; tente novamente.")
+            raise RuntimeError("O checkpoint baixado parece incompleto; tente novamente; o arquivo parcial será retomado.")
         target.replace(model_path)
         return model_path
 
@@ -632,8 +653,8 @@ class GeneratorEngine:
         snapshot = snapshot_download(
             repo_id=repo,
             cache_dir=str(HF_HUB_CACHE),
-            allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt", "*.jinja"],
-            ignore_patterns=["*.bin", "*.ckpt", "*.pt", "*.onnx", "*.msgpack", "*.h5"],
+            allow_patterns=AURAFLOW_ALLOW_PATTERNS,
+            ignore_patterns=AURAFLOW_IGNORE_PATTERNS,
             max_workers=8,
         )
         return str(snapshot)
@@ -678,13 +699,26 @@ class GeneratorEngine:
             repo = str(spec.get("repo") or MODEL_REPO).strip()
             if not repo:
                 raise RuntimeError("O perfil Pony V7 não possui um repositório Diffusers configurado.")
-            from diffusers import AuraFlowPipeline
+            from diffusers import AuraFlowPipeline, AuraFlowTransformer2DModel
             try:
-                # Pony V7 é AuraFlow e precisa do layout Diffusers completo:
-                # T5/text_encoder, tokenizer, transformer, VAE e scheduler.
+                # O arquivo single-file do Civitai contém o transformer AuraFlow.
+                # O Hub fornece somente config, tokenizer, T5 e VAE; isso evita
+                # baixar novamente os três shards F32 (~27 GB) do transformer.
+                model_path = self.ensure_checkpoint(spec)
                 snapshot = self._download_auraflow_snapshot(repo)
+                transformer = AuraFlowTransformer2DModel.from_single_file(
+                    str(model_path),
+                    config=snapshot,
+                    subfolder="transformer",
+                    torch_dtype=torch.float16,
+                    local_files_only=True,
+                )
                 self.pipe = AuraFlowPipeline.from_pretrained(
-                    snapshot, torch_dtype=torch.float16, use_safetensors=True, local_files_only=True
+                    snapshot,
+                    transformer=transformer,
+                    torch_dtype=torch.float16,
+                    use_safetensors=True,
+                    local_files_only=True,
                 )
                 self._configure_memory_savers(self.pipe)
                 self.loaded_model_id = spec["id"]

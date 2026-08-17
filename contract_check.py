@@ -79,13 +79,21 @@ def main() -> None:
     if (
         "from diffusers import AuraFlowPipeline" not in server_source
         or "AuraFlowPipeline.from_pretrained" not in server_source
+        or "AuraFlowTransformer2DModel" not in server_source
+        or "AuraFlowTransformer2DModel.from_single_file" not in server_source
+        or "response.status_code == 206" not in server_source
+        or 'headers["Range"]' not in server_source
         or "purplesmartai/pony-v7-base" not in server_source
         or "from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline" not in server_source
         or "StableDiffusionXLPipeline.from_single_file" not in server_source
         or "torch.float16" not in server_source
         or "callback_on_step_end" not in server_source
         or "snapshot_download" not in server_source
-        or "allow_patterns" not in server_source
+        or "allow_patterns=AURAFLOW_ALLOW_PATTERNS" not in server_source
+        or '"text_encoder/model.fp16.safetensors"' not in server_source
+        or '"vae/*fp16.safetensors"' not in server_source
+        or '"transformer/*.safetensors"' in server_source
+        or '"*.gguf"' not in server_source
         or "max_workers=8" not in server_source
         or "HF_XET_HIGH_PERFORMANCE" not in server_source
         or "enable_tiling" not in server_source
