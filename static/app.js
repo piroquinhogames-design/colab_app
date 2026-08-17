@@ -30,6 +30,20 @@ const EDIT_LEVELS = {
   high: {label: 'ALTO', strength: 0.85},
 };
 
+function syncResolutionOptions(engine) {
+  const auraFlow = String(engine || '').toLowerCase() === 'auraflow';
+  const minimum = auraFlow ? 768 : 512;
+  const maximum = auraFlow ? 1536 : 1024;
+  const sizes = Array.from({length: ((maximum - minimum) / 64) + 1}, (_, index) => minimum + index * 64);
+  ['width', 'height'].forEach((id) => {
+    const select = $(`#${id}`);
+    if (!select) return;
+    const current = Number(select.value);
+    select.innerHTML = sizes.map((size) => `<option>${size}</option>`).join('');
+    select.value = String(sizes.includes(current) ? current : Math.min(Math.max(1024, minimum), maximum));
+  });
+}
+
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 }
@@ -85,6 +99,7 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
   const model = state.models.find((item) => item.id === modelId) || state.models[0];
   if (!model) return;
   const defaults = model.defaults || {};
+  syncResolutionOptions(model.engine);
   if ($('#model') && $('#model').value !== model.id) $('#model').value = model.id;
   if ($('#settings-model')) $('#settings-model').value = model.id;
   const family = String(model.family || 'sdxl').toUpperCase();
@@ -104,6 +119,13 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
   if (engine) engine.textContent = String(model.name || model.id).slice(0, 32).toUpperCase();
   if ($('#active-model-name')) $('#active-model-name').textContent = String(model.name || model.id).toUpperCase();
   if ($('#active-model-help')) $('#active-model-help').textContent = `${family} // ${model.engine || 'ENGINE'} // ${model.notes || 'defaults adaptativos ativos.'}`;
+  const img2imgButton = $('.mode[data-mode="img2img"]');
+  const auraFlowOnlyText = String(model.engine || '').toLowerCase() === 'auraflow';
+  if (img2imgButton) {
+    img2imgButton.disabled = auraFlowOnlyText;
+    img2imgButton.title = auraFlowOnlyText ? 'Pony V7 Base/AuraFlow suporta apenas TXT→IMG.' : '';
+  }
+  if (auraFlowOnlyText && state.mode === 'img2img') setMode('text2img', {silent: true});
   if ($('#settings-model-info')) $('#settings-model-info').textContent = `${family} // base ${model.base || '--'} // ${model.notes || 'perfil adaptativo'}`;
   if ($('#settings-engine-status')) $('#settings-engine-status').textContent = `ENGINE // ${String(model.engine || '--').toUpperCase()} // ${model.ready === false ? 'PENDENTE' : 'READY'}`;
   if ($('#catalog-family-label')) $('#catalog-family-label').textContent = family;
@@ -116,7 +138,7 @@ function renderModels(models, selectedId = '') {
   const select = $('#model');
   if (!select) return;
   if (!state.models.length) {
-    state.models = [{id: 'pony-v7-base', name: 'Pony V7 Base', family: 'pony', base: 'Pony', engine: 'sdxl', ready: true, cached: false, defaults: {steps: 30, guidance: 5.5, strength: .65, sampler: 'euler_a'}}];
+    state.models = [{id: 'pony-v7-base', name: 'Pony V7 Base', family: 'pony', base: 'Pony', engine: 'auraflow', ready: true, cached: false, defaults: {steps: 30, guidance: 5.5, strength: .65, sampler: 'euler_a'}}];
   }
   const options = state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)} · ${escapeHtml(String(model.family || 'sdxl').toUpperCase())}</option>`).join('');
   select.innerHTML = options;
@@ -127,13 +149,18 @@ function renderModels(models, selectedId = '') {
   updateModelProfile(initial, {silent: true});
 }
 
-function setMode(mode) {
+function setMode(mode, {silent = false} = {}) {
+  const selectedModel = state.models.find((item) => item.id === ($('#model')?.value || '')) || state.models[0];
+  if (mode === 'img2img' && String(selectedModel?.engine || '').toLowerCase() === 'auraflow') {
+    mode = 'text2img';
+    if (!silent) toast('O Pony V7 Base usa AuraFlow e suporta apenas TXT→IMG.', true);
+  }
   state.mode = mode;
   $$('.mode').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
   $('#upload-zone').classList.toggle('hidden', mode !== 'img2img');
   $('#edit-control').classList.toggle('hidden', mode !== 'img2img');
   $('.strength-control').classList.toggle('hidden', mode !== 'img2img');
-  log(mode === 'img2img' ? 'Modo IMG→IMG selecionado; injete a imagem-base.' : 'Modo TXT→IMG selecionado.');
+  if (!silent) log(mode === 'img2img' ? 'Modo IMG→IMG selecionado; injete a imagem-base.' : 'Modo TXT→IMG selecionado.');
 }
 
 function setEditLevel(level, {silent = false} = {}) {
@@ -367,26 +394,32 @@ function bindPromptStoreActions() {
 async function remixPromptStoreItem(index) {
   const item = state.promptStoreItems[index];
   if (!item?.prompt) return;
+  const auraFlow = String(activeModel().engine || '').toLowerCase() === 'auraflow';
   try {
-    const response = await fetch(`/api/prompt-store/image?url=${encodeURIComponent(item.image)}`);
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || 'Não foi possível preparar a imagem da Loja de Prompts.');
+    let mode = auraFlow ? 'text2img' : 'img2img';
+    if (!auraFlow) {
+      const response = await fetch(`/api/prompt-store/image?url=${encodeURIComponent(item.image)}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Não foi possível preparar a imagem da Loja de Prompts.');
+      }
+      const blob = await response.blob();
+      const file = new File([blob], `prompt-store-${item.id || Date.now()}.jpg`, {type: blob.type || 'image/jpeg'});
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      $('#source-image').files = transfer.files;
+      $('#upload-name').textContent = `PROMPT STORE // ${file.name}`;
     }
-    const blob = await response.blob();
-    const file = new File([blob], `prompt-store-${item.id || Date.now()}.jpg`, {type: blob.type || 'image/jpeg'});
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    $('#source-image').files = transfer.files;
-    $('#upload-name').textContent = `PROMPT STORE // ${file.name}`;
-    const sizes = [512, 576, 640, 704, 768, 832, 896, 960, 1024];
+    const minimum = auraFlow ? 768 : 512;
+    const maximum = auraFlow ? 1536 : 1024;
+    const sizes = Array.from({length: ((maximum - minimum) / 64) + 1}, (_, offset) => minimum + offset * 64);
     const width = sizes.includes(Number(item.width)) ? Number(item.width) : 1024;
     const height = sizes.includes(Number(item.height)) ? Number(item.height) : 1024;
-    restoreLastSettings({prompt: item.prompt, negative_prompt: item.negative_prompt || '', seed: -1, steps: Number(item.steps) || 28, guidance: Number(item.guidance) || 6.5, width, height, strength: .55, mode: 'img2img', edit_level: 'medium', loras: item.loras || []});
-    setMode('img2img');
+    restoreLastSettings({prompt: item.prompt, negative_prompt: item.negative_prompt || '', seed: -1, steps: Number(item.steps) || 28, guidance: Number(item.guidance) || 6.5, width, height, strength: .55, mode, edit_level: 'medium', loras: item.loras || []});
+    setMode(mode);
     $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
     $('#prompt-store-dialog').close();
-    toast('Prompt, imagem de referência e recursos disponíveis carregados para remix.');
+    toast(auraFlow ? 'Prompt e recursos carregados para TXT→IMG no AuraFlow.' : 'Prompt, imagem de referência e recursos disponíveis carregados para remix.');
     log(`Remix da Loja de Prompts ${String(item.id || '').slice(0, 10)} preparado.`);
   } catch (error) { toast(error.message, true); }
 }
@@ -471,21 +504,25 @@ function openImagePreview(jobId) {
 async function remixHistoryJob(jobId) {
   const job = historyJob(jobId);
   if (!job) return;
+  const auraFlow = String(activeModel().engine || '').toLowerCase() === 'auraflow';
   try {
-    const response = await fetch(`/api/history/${encodeURIComponent(job.id)}/image`);
-    if (!response.ok) throw new Error('A imagem arquivada não está disponível para remix.');
-    const blob = await response.blob();
-    const file = new File([blob], `remix-${job.id}.png`, {type: blob.type || 'image/png'});
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    const source = $('#source-image');
-    source.files = transfer.files;
-    $('#upload-name').textContent = `REMIX // ${file.name}`;
-    restoreLastSettings({...job.params, mode: 'img2img', seed: -1, edit_level: job.params?.edit_level || 'medium'});
-    setMode('img2img');
+    let mode = auraFlow ? 'text2img' : 'img2img';
+    if (!auraFlow) {
+      const response = await fetch(`/api/history/${encodeURIComponent(job.id)}/image`);
+      if (!response.ok) throw new Error('A imagem arquivada não está disponível para remix.');
+      const blob = await response.blob();
+      const file = new File([blob], `remix-${job.id}.png`, {type: blob.type || 'image/png'});
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      const source = $('#source-image');
+      source.files = transfer.files;
+      $('#upload-name').textContent = `REMIX // ${file.name}`;
+    }
+    restoreLastSettings({...job.params, mode, seed: -1, edit_level: job.params?.edit_level || 'medium'});
+    setMode(mode);
     $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
     if ($('#image-dialog').open) $('#image-dialog').close();
-    toast('Materiais carregados: prompt, LoRAs, parâmetros e imagem-base. Seed definida como aleatória.');
+    toast(auraFlow ? 'Prompt e parâmetros carregados para TXT→IMG no AuraFlow.' : 'Materiais carregados: prompt, LoRAs, parâmetros e imagem-base. Seed definida como aleatória.');
     log(`Remix preparado a partir do job ${String(job.id).slice(0, 8)}.`);
   } catch (error) { toast(error.message, true); }
 }

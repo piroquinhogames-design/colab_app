@@ -6,7 +6,7 @@ O pacote é executado integralmente em uma sessão Google Colab com GPU T4. O pr
 
 O formulário principal mostra somente o modelo ativo. Checkpoint, sampler e loja de modelos ficam no diálogo **Configurações**. O bootstrap envia os perfis públicos com família, base, engine, disponibilidade, cache e defaults. A interface aplica o preset do perfil e atualiza automaticamente os rótulos e as lojas de LoRAs e prompts.
 
-O perfil inicial é `pony-v7-base`, com base `Pony`, modelo Civitai `1901521`, versão `2152373` e engine `sdxl`. O checkpoint é carregado pelo `StableDiffusionXLPipeline.from_single_file`, com pipelines text-to-image e image-to-image e defaults adaptados para a família Pony.
+O perfil inicial é `pony-v7-base`, com base `Pony`, modelo Civitai `1901521`, versão `2152373` e engine `auraflow`. O runtime carrega `AuraFlowPipeline.from_pretrained("purplesmartai/pony-v7-base")`, pois o Pony V7 exige o repositório Diffusers completo com tokenizer, T5/text encoder, transformer, VAE e scheduler. O arquivo SafeTensor do Civitai permanece como referência do perfil; o fluxo atual oferece TXT→IMG, e IMG→IMG é bloqueado para AuraFlow.
 
 ## Catálogo Civitai
 
@@ -22,12 +22,12 @@ A rota `GET /api/prompt-store` também recebe a família ativa. O servidor consu
 
 ## Engines e perfis
 
-O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
+O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `auraflow`, descarrega o pipeline anterior, libera a memória CUDA e carrega o repositório Diffusers completo do Pony V7. Para `sdxl`, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
 
 | Família | Engine | Loja de LoRAs | Estado padrão |
 |---|---|---|---|
 | `sdxl-illustrious` | `sdxl` | Illustrious | Geração disponível com pipeline SDXL |
-| `pony` | `sdxl` | Pony | Geração disponível com pipeline SDXL |
+| `pony` | `auraflow` | Pony | Geração disponível com AuraFlow em TXT→IMG |
 | `sdxl` | `sdxl` | SDXL 1.0 | Geração disponível com pipeline SDXL |
 | `flux` | engine separado | Flux | Catalogável; geração bloqueada |
 | `sd3` | engine separado | SD 3 | Catalogável; geração bloqueada |
@@ -76,4 +76,4 @@ A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execu
 }
 ```
 
-O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels, 10–60 steps e escala de guidance entre 1 e 15. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.
+O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels para SDXL e entre 768 e 1536 pixels para AuraFlow, 10–60 steps e escala de guidance entre 1 e 15. O Pony V7/AuraFlow aceita somente TXT→IMG no fluxo atual. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.

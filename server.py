@@ -1,8 +1,8 @@
 """ModelLab Studio — servidor para execução integral no Google Colab.
 
 Variáveis obrigatórias: STUDIO_PASSWORD, MEGA_EMAIL, MEGA_PASSWORD.
-Variáveis opcionais: CIVITAI_TOKEN, MODEL_URL, MODEL_PATH, MODELS_CONFIG,
-MODEL_ID, MEGA_FOLDER, STUDIO_SECRET e PORT.
+Variáveis opcionais: CIVITAI_TOKEN, MODEL_URL, MODEL_REPO, MODEL_PATH,
+MODELS_CONFIG, MODEL_ID, MEGA_FOLDER, STUDIO_SECRET e PORT.
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ MAX_LORAS = 3
 MODEL_URL = os.environ.get(
     "MODEL_URL", "https://civitai.com/api/download/models/2152373"
 )
+MODEL_REPO = os.environ.get("MODEL_REPO", "purplesmartai/pony-v7-base")
 MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "pony_v7_base.safetensors"))
 DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "pony-v7-base")
 MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "ModelLabStudio")
@@ -69,9 +70,9 @@ MODEL_FAMILY_PROFILES: dict[str, dict[str, Any]] = {
         "notes": "SDXL derivado de Illustrious; compatível com a maioria das LoRAs Illustrious quando a variante coincide.",
     },
     "pony": {
-        "base": "Pony", "engine": "sdxl", "lora_base": "Pony",
+        "base": "Pony", "engine": "auraflow", "lora_base": "Pony",
         "defaults": {"steps": 30, "guidance": 5.5, "strength": 0.65, "sampler": "euler_a"},
-        "notes": "SDXL derivado de Pony; requer LoRAs e tags compatíveis com Pony.",
+        "notes": "Pony V7 usa AuraFlow; requer o repositório Diffusers completo e LoRAs AuraFlow/Pony compatíveis.",
     },
     "sdxl": {
         "base": "SDXL 1.0", "engine": "sdxl", "lora_base": "SDXL 1.0",
@@ -136,6 +137,7 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
         "id": DEFAULT_MODEL_ID,
         "name": "Pony V7 Base" if DEFAULT_MODEL_ID == "pony-v7-base" else DEFAULT_MODEL_ID,
         "url": MODEL_URL,
+        "repo": MODEL_REPO,
         "path": str(MODEL_PATH),
         "family": default_family,
         "base": base_profile["base"],
@@ -173,6 +175,11 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
             profile["family"] = candidate_family
             profile["path"] = str(candidate.get("path") or MODELS / f"{model_id}.safetensors")
             profile["defaults"] = {**inherited["defaults"], **(candidate.get("defaults") or {})}
+            if candidate_family == "pony" and "engine" not in candidate:
+                # Apenas o perfil Pony V7 Base usa o repositório AuraFlow oficial.
+                # Outros checkpoints Pony vindos do Civitai continuam sendo SDXL.
+                profile["engine"] = "sdxl"
+                profile.pop("repo", None)
             specs[model_id] = profile
     except (TypeError, ValueError, json.JSONDecodeError):
         pass
@@ -195,6 +202,11 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
             profile["family"] = candidate_family
             profile["path"] = str(candidate.get("path") or MODELS / f"{model_id}.safetensors")
             profile["defaults"] = {**inherited["defaults"], **(candidate.get("defaults") or {})}
+            if candidate_family == "pony" and "engine" not in candidate:
+                # Apenas o perfil Pony V7 Base usa o repositório AuraFlow oficial.
+                # Outros checkpoints Pony vindos do Civitai continuam sendo SDXL.
+                profile["engine"] = "sdxl"
+                profile.pop("repo", None)
             specs[model_id] = profile
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         pass
@@ -212,14 +224,15 @@ def get_model_spec(model_id: str | None = None) -> dict[str, Any]:
 def public_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
     family = str(spec.get("family", "sdxl"))
     engine = str(spec.get("engine") or family_profile(family).get("engine", "unsupported"))
-    ready = engine == "sdxl"
+    ready = engine in {"sdxl", "auraflow"}
     return {
         "id": spec["id"], "name": spec.get("name", spec["id"]),
         "family": family, "base": spec.get("base", family_profile(family)["base"]),
         "lora_base": spec.get("lora_base", civitai_base_for_family(family)),
         "engine": engine, "ready": ready, "cached": Path(spec["path"]).exists(),
         "defaults": spec.get("defaults", family_profile(family)["defaults"]),
-        "notes": spec.get("notes", ""), "civitai_model_id": spec.get("civitai_model_id"),
+        "notes": spec.get("notes", ""), "repo": spec.get("repo"),
+        "civitai_model_id": spec.get("civitai_model_id"),
         "version_id": spec.get("version_id"),
     }
 
@@ -637,6 +650,25 @@ class GeneratorEngine:
         if not torch.cuda.is_available():
             raise RuntimeError("Nenhuma GPU CUDA foi detectada. Ative uma sessão T4 no Colab e reinicie o servidor.")
         engine = str(spec.get("engine") or family_profile(spec.get("family")).get("engine", "unsupported"))
+
+        if engine == "auraflow":
+            repo = str(spec.get("repo") or MODEL_REPO).strip()
+            if not repo:
+                raise RuntimeError("O perfil Pony V7 não possui um repositório Diffusers configurado.")
+            from diffusers import AuraFlowPipeline
+            try:
+                # Pony V7 é AuraFlow e precisa do layout Diffusers completo:
+                # T5/text_encoder, tokenizer, transformer, VAE e scheduler.
+                self.pipe = AuraFlowPipeline.from_pretrained(
+                    repo, torch_dtype=torch.float16, use_safetensors=True
+                )
+                self._configure_memory_savers(self.pipe)
+                self.loaded_model_id = spec["id"]
+            except Exception:
+                self._release_pipeline()
+                raise
+            return
+
         if engine != "sdxl":
             raise RuntimeError(f"Engine {engine!r} ainda não está disponível para geração.")
         model_path = self.ensure_checkpoint(spec)
@@ -734,6 +766,8 @@ class GeneratorEngine:
 
         with self.load_lock:
             spec = get_model_spec(job.params.model_id)
+            if spec.get("engine") == "auraflow" and job.params.mode != "text2img":
+                raise RuntimeError("O Pony V7 Base usa AuraFlow e, nesta versão, suporta apenas o modo TXT→IMG.")
             self._load_pipeline(spec)
             assert self.pipe is not None
             self._apply_sampler(job.params.sampler)
@@ -941,6 +975,8 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     engine = str(model_spec.get("engine") or family_profile(family).get("engine", "unsupported"))
     if engine == "unsupported":
         raise ValueError(f"O modelo selecionado pertence à família {family}, mas esse engine ainda não está configurado no ModelLab.")
+    if engine == "auraflow" and mode == "img2img":
+        raise ValueError("O Pony V7 Base usa AuraFlow e, nesta versão, suporta apenas o modo TXT→IMG.")
     sampler = str(raw.get("sampler") or model_spec.get("defaults", {}).get("sampler", "euler_a")).strip().lower()
     if sampler not in SUPPORTED_SAMPLERS:
         raise ValueError("Sampler não suportado pelo perfil atual.")
@@ -960,8 +996,9 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
         raise ValueError("Há um parâmetro numérico inválido.") from exc
     if not 10 <= steps <= 60 or not 1 <= guidance <= 15 or not 0.05 <= strength <= 1:
         raise ValueError("Steps, guidance ou strength estão fora dos limites aceitos.")
-    if width not in range(512, 1025, 64) or height not in range(512, 1025, 64):
-        raise ValueError("Largura e altura devem ser múltiplos de 64 entre 512 e 1024.")
+    size_min, size_max = (768, 1536) if engine == "auraflow" else (512, 1024)
+    if width not in range(size_min, size_max + 1, 64) or height not in range(size_min, size_max + 1, 64):
+        raise ValueError(f"Largura e altura devem ser múltiplos de 64 entre {size_min} e {size_max}.")
     if mode == "img2img" and not source_image:
         raise ValueError("Envie uma imagem-base para usar img2img.")
     parsed_loras: list[LoRASelection] = []
@@ -1025,7 +1062,7 @@ def bootstrap():
         },
         "last_settings": last_settings,
         "last_settings_source": "mega" if last_settings else None,
-        "limits": {"maxLoras": MAX_LORAS, "sizes": list(range(512, 1025, 64))},
+        "limits": {"maxLoras": MAX_LORAS, "sizes": list(range(512, 1537, 64)), "auraFlowSizes": list(range(768, 1537, 64))},
         "models": [public_model_spec(spec) for spec in MODEL_SPECS.values()],
         "model": public_model_spec(get_model_spec()),
     })
@@ -1112,10 +1149,14 @@ def model_profile():
         "id": model_id, "name": str(payload.get("name") or model_id)[:120],
         "url": f"https://civitai.com/api/download/models/{version_id}",
         "path": str(MODELS / f"{model_id}.safetensors"), "family": family,
-        "base": str(payload.get("base_model") or profile["base"]), "engine": profile["engine"],
+        "base": str(payload.get("base_model") or profile["base"]),
+        # O único perfil Pony AuraFlow conhecido é o Pony V7 Base oficial.
+        "engine": "auraflow" if (civitai_model_id == 1901521 and version_id == 2152373) else "sdxl",
         "lora_base": profile["lora_base"], "defaults": {**profile["defaults"], **(payload.get("defaults") or {})},
         "notes": profile["notes"], "civitai_model_id": civitai_model_id, "version_id": version_id,
     }
+    if spec["engine"] == "auraflow":
+        spec["repo"] = MODEL_REPO
     MODEL_SPECS[model_id] = spec
     try:
         cached_profiles = [candidate for key, candidate in MODEL_SPECS.items() if key != DEFAULT_MODEL_ID]

@@ -70,13 +70,13 @@ def validate_runtime() -> None:
     diffusers_version = Version(diffusers.__version__)
     if diffusers_version < Version("0.39.0"):
         raise RuntimeError(
-            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline Pony/SDXL. "
+            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline Pony/AuraFlow. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     transformers_version = Version(importlib.metadata.version("transformers"))
     if transformers_version < Version("4.51.0"):
         raise RuntimeError(
-            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para o pipeline Pony/SDXL. "
+            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para o pipeline Pony/AuraFlow. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     print(
@@ -152,15 +152,17 @@ def main() -> None:
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
 
-    # Configuração técnica padronizada: o perfil Pony V7 Base usa o pipeline SDXL
-    # clássico e não exige engine adicional ou repositório Diffusers separado.
+    # Configuração técnica padronizada: Pony V7 Base usa AuraFlow e precisa do
+    # repositório Diffusers completo, pois o arquivo Civitai não contém sozinho
+    # tokenizer, T5/text_encoder, VAE, scheduler e transformer.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
     os.environ.setdefault("MODEL_ID", "pony-v7-base")
     os.environ.setdefault("MODEL_URL", "https://civitai.com/api/download/models/2152373")
+    os.environ.setdefault("MODEL_REPO", "purplesmartai/pony-v7-base")
     os.environ.setdefault("MODEL_PATH", f"{os.environ["STUDIO_ROOT"]}/models/pony_v7_base.safetensors")
     os.environ.setdefault("MODEL_FAMILY", "pony")
-    print("[setup] Perfil Pony V7 Base padronizado; pipeline SDXL configurado automaticamente.")
+    print("[setup] Perfil Pony V7 Base padronizado; pipeline AuraFlow configurado automaticamente.")
 
     install_requirements()
     validate_runtime()

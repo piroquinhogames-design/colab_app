@@ -12,7 +12,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Pony V7 Base e o pipeline SDXL são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar e baixar modelos; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
+O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Pony V7 Base e o pipeline AuraFlow são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar o catálogo Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
 A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Diffusers 0.39.0**, **Accelerate 1.3.0+**, **Hugging Face Hub 0.34.0–0.x**, **PEFT 0.17.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 
@@ -26,7 +26,7 @@ O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferec
 
 ## Modelo padrão: Pony V7 Base
 
-O perfil inicial é **Pony V7 Base**, obtido do modelo Civitai `1901521`, versão `2152373`, com base declarada como **Pony**. O checkpoint é um modelo SDXL e é carregado pelo `StableDiffusionXLPipeline.from_single_file`, com suporte a text-to-image, image-to-image, LoRAs compatíveis e economia automática de memória para uma GPU T4.
+O perfil inicial é **Pony V7 Base**, obtido do modelo Civitai `1901521`, versão `2152373`, com base declarada como **Pony**. O modelo é baseado em **AuraFlow**, e o runtime usa o repositório Diffusers oficial `purplesmartai/pony-v7-base`, que contém tokenizer, T5/text encoder, transformer, VAE e scheduler. O arquivo SafeTensor do Civitai é mantido como referência do perfil, mas não é carregado como um checkpoint SDXL isolado. O pipeline suporta text-to-image, LoRAs compatíveis e economia automática de memória para uma GPU T4; IMG→IMG fica bloqueado porque AuraFlow não oferece esse pipeline no projeto atual.
 
 O endpoint oficial de download é `https://civitai.com/api/download/models/2152373`. O inicializador define automaticamente o perfil, a família e o caminho de cache, portanto o usuário comum não precisa configurar esses valores manualmente.
 
@@ -37,12 +37,12 @@ Os modelos ficam ocultos no formulário principal e são administrados pela aba 
 | Família | Engine | Defaults iniciais | Loja de LoRAs |
 |---|---|---|---|
 | `sdxl-illustrious` | `sdxl` | 28 steps, CFG 6.5, Euler a | Illustrious |
-| `pony` | `sdxl` | 30 steps, CFG 5.5, Euler a | Pony |
+| `pony` | `auraflow` | 30 steps, CFG 5.5, Euler a | Pony |
 | `sdxl` | `sdxl` | 28 steps, CFG 6.5, Euler a | SDXL 1.0 |
 | `flux` | engine separado | 28 steps, CFG 3.5 | Flux |
 | `sd3` | engine separado | 28 steps, CFG 5.0 | SD 3 |
 
-Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los pelo pipeline SDXL. Isso evita incompatibilidades de arquitetura. O pipeline Pony permite text-to-image e image-to-image, desde que o checkpoint e as LoRAs selecionadas sejam compatíveis com Pony.
+Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los sem engines próprios. Isso evita incompatibilidades de arquitetura. O pipeline Pony/AuraFlow permite text-to-image; IMG→IMG é rejeitado explicitamente e as LoRAs precisam estar em formato compatível com AuraFlow/Pony.
 
 ## Loja de modelos Civitai
 
@@ -94,7 +94,8 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 | `MEGA_FOLDER` | Pasta remota para imagens e metadados | `ModelLabStudio` |
 | `MODEL_ID` | Identificador do perfil padrão | `pony-v7-base` |
 | `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/2152373` |
-| `MODEL_PATH` | Cache local do perfil padrão | `/content/modellab-studio/models/pony_v7_base.safetensors` |
+| `MODEL_REPO` | Repositório Diffusers completo usado pelo Pony V7 | `purplesmartai/pony-v7-base` |
+| `MODEL_PATH` | Caminho de referência do arquivo Civitai | `/content/modellab-studio/models/pony_v7_base.safetensors` |
 | `MODEL_FAMILY` | Família declarada do perfil padrão | `pony` |
 | `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
 | `STUDIO_ROOT` | Diretório temporário da sessão | `/content/modellab-studio` |
