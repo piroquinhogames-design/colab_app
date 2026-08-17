@@ -837,7 +837,10 @@ class JobManager:
                     job.mega_synced = self.archive.save_job(job, image)
             except Exception as exc:
                 with self.lock:
-                    job.status, job.error, job.progress_phase, job.updated_at = "failed", str(exc)[:500], "failed", now_iso()
+                    error_text = str(exc)
+                    if len(error_text) > 1_500:
+                        error_text = error_text[:300] + "\n... [log truncado] ...\n" + error_text[-1_150:]
+                    job.status, job.error, job.progress_phase, job.updated_at = "failed", error_text, "failed", now_iso()
                     job.mega_synced = self.archive.save_job(job, None)
             finally:
                 self.pending.task_done()

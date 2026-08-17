@@ -49,6 +49,8 @@ class ComfyBackend:
         self.timeout = float(os.environ.get("COMFY_JOB_TIMEOUT", "3600"))
         self.model_lock = threading.Lock()
         self.memory_node_available: bool | None = None
+        self.log_path = self.comfy_root / "logs" / "comfyui.log"
+        self.log_handle = None
 
     @property
     def model_dir(self) -> Path:
@@ -105,6 +107,32 @@ class ComfyBackend:
             command.extend(shlex.split(extra))
         return command
 
+    def _open_log(self):
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.log_path.open("a", encoding="utf-8", buffering=1)
+        handle.write(f"\n\n=== início do ComfyUI {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        handle.write("Comando: " + " ".join(self._command()) + "\n")
+        handle.flush()
+        return handle
+
+    def _log_tail(self, limit: int = 8_000) -> str:
+        try:
+            if not self.log_path.exists():
+                return ""
+            with self.log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - limit), os.SEEK_SET)
+                return handle.read().strip()
+        except OSError:
+            return ""
+
+    def _startup_error(self, message: str) -> RuntimeError:
+        tail = self._log_tail()
+        if tail:
+            return RuntimeError(f"{message}\nLog do ComfyUI ({self.log_path}):\n{tail[-8_000:]}")
+        return RuntimeError(f"{message}\nLog do ComfyUI: {self.log_path} (vazio ou indisponível)")
+
     def _memory_node_loaded(self) -> bool | None:
         """Consulta object_info sem iniciar ou descarregar o ComfyUI."""
         try:
@@ -140,14 +168,20 @@ class ComfyBackend:
                 self._wait_until_ready()
                 self.memory_node_available = self._memory_node_loaded()
                 return
-            self.process = subprocess.Popen(
-                self._command(),
-                cwd=self.comfy_dir,
-                text=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-                env=os.environ.copy(),
-            )
+            self.log_handle = self._open_log()
+            try:
+                self.process = subprocess.Popen(
+                    self._command(),
+                    cwd=self.comfy_dir,
+                    text=True,
+                    stdout=self.log_handle,
+                    stderr=subprocess.STDOUT,
+                    env=os.environ.copy(),
+                )
+            except Exception:
+                self.log_handle.close()
+                self.log_handle = None
+                raise
             try:
                 self._wait_until_ready()
                 self.memory_node_available = self._memory_node_loaded()
@@ -162,9 +196,10 @@ class ComfyBackend:
             if self._reachable():
                 return
             if self.process is not None and self.process.poll() is not None:
-                raise RuntimeError("O processo headless do ComfyUI encerrou antes de abrir a API.")
+                code = self.process.returncode
+                raise self._startup_error(f"O processo headless do ComfyUI encerrou antes de abrir a API (código {code}).")
             time.sleep(0.5)
-        raise RuntimeError(f"ComfyUI não respondeu em {self.base_url} dentro do tempo configurado.")
+        raise self._startup_error(f"ComfyUI não respondeu em {self.base_url} dentro do tempo configurado.")
 
     @staticmethod
     def _headers() -> dict[str, str]:
@@ -413,6 +448,8 @@ class ComfyBackend:
             "process_alive": bool(self.process is not None and self.process.poll() is None),
             "reachable": False,
             "memory_node_available": self.memory_node_available,
+            "log_path": str(self.log_path),
+            "log_tail": self._log_tail(4_000),
         }
         try:
             response = self.session.get(f"{self.base_url}/system_stats", timeout=3)
@@ -439,6 +476,9 @@ class ComfyBackend:
                 except subprocess.TimeoutExpired:
                     self.process.kill()
             self.process = None
+            if self.log_handle is not None:
+                self.log_handle.close()
+                self.log_handle = None
 
 
 __all__ = ["ComfyBackend"]

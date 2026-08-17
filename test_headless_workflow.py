@@ -11,6 +11,10 @@ with TemporaryDirectory() as temporary:
     install_backend = ComfyBackend(Path(__file__).resolve().parent, install_root / 'runtime', 8188)
     install_backend._ensure_cleanup_node()
     assert (install_backend.comfy_dir / 'custom_nodes' / 'modellab_memory.py').exists()
+    log_handle = install_backend._open_log()
+    log_handle.write('RuntimeError: falha de teste no loader Anima\\n')
+    log_handle.close()
+    assert 'falha de teste no loader Anima' in str(install_backend._startup_error('processo encerrou'))
 
 root = Path('/tmp/modellab-headless-test')
 backend = ComfyBackend(root, root / 'runtime', 8188)
