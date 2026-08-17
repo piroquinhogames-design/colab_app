@@ -68,41 +68,29 @@ def main() -> None:
     if '"--upgrade", "--no-deps"' not in launcher_source:
         raise AssertionError("O instalador deve preservar dependências globais do Colab com --no-deps")
     if 'transformers_version < Version("4.51.0")' not in launcher_source:
-        raise AssertionError("O runtime deve confirmar Transformers 4.51.0+ para o pipeline Pony/AuraFlow")
+        raise AssertionError("O runtime deve confirmar Transformers 4.51.0+ para o pipeline Pony/SDXL")
     if 'diffusers_version < Version("0.39.0")' not in launcher_source:
-        raise AssertionError("O runtime deve confirmar Diffusers 0.39.0+ para o pipeline Pony/AuraFlow")
+        raise AssertionError("O runtime deve confirmar Diffusers 0.39.0+ para o pipeline Pony/SDXL")
     if "from Crypto.Cipher import AES" not in launcher_source:
         raise AssertionError("O runtime deve validar o módulo Crypto exigido pelo cliente MEGA")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     if ".enable_vae_slicing()" in server_source or "enable_slicing()" not in server_source or "enable_tiling()" not in server_source:
         raise AssertionError("O servidor deve usar as APIs atuais de slicing e tiling do VAE")
     if (
-        "from diffusers import AuraFlowPipeline" not in server_source
-        or "AuraFlowPipeline.from_pretrained" not in server_source
-        or "AuraFlowTransformer2DModel" not in server_source
-        or "AuraFlowTransformer2DModel.from_single_file" not in server_source
-        or "_load_auraflow_checkpoint" not in server_source
-        or "from safetensors.torch import load_file" not in server_source
-        or "response.status_code == 206" not in server_source
-        or 'headers["Range"]' not in server_source
-        or "purplesmartai/pony-v7-base" not in server_source
+        "from diffusers import AuraFlowPipeline" in server_source
+        or "AuraFlowTransformer2DModel" in server_source
+        or "snapshot_download" in server_source
         or "from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline" not in server_source
         or "StableDiffusionXLPipeline.from_single_file" not in server_source
         or "torch.float16" not in server_source
         or "callback_on_step_end" not in server_source
-        or "snapshot_download" not in server_source
-        or "allow_patterns=AURAFLOW_ALLOW_PATTERNS" not in server_source
-        or '"text_encoder/model.fp16.safetensors"' not in server_source
-        or '"vae/*fp16.safetensors"' not in server_source
-        or '"transformer/*.safetensors"' in server_source
-        or '"*.gguf"' not in server_source
-        or "max_workers=8" not in server_source
-        or "HF_XET_HIGH_PERFORMANCE" not in server_source
+        or "response.status_code == 206" not in server_source
+        or 'headers["Range"]' not in server_source
         or "enable_tiling" not in server_source
         or "_extract_first_image" not in server_source
         or "from diffusers import ModularPipeline" in server_source
     ):
-        raise AssertionError("Pony deve usar AuraFlow em layout Diffusers completo e manter SDXL para perfis compatíveis")
+        raise AssertionError("Pony deve usar o pipeline SDXL single-file com suporte TXT→IMG e IMG→IMG")
     if "archive-initializer" not in server_source or "archive_ready" not in server_source:
         raise AssertionError("A conexão MEGA deve ocorrer sem bloquear a abertura do servidor")
     if '"ready": archive_ready.is_set()' not in server_source:
@@ -117,25 +105,20 @@ def main() -> None:
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
     default_spec = server.get_model_spec()
-    assert_equal(default_spec["id"], "pony-v7-base", "O perfil padrão deve ser Pony V7 Base")
+    assert_equal(default_spec["id"], "prefect-pony-xl-v6", "O perfil padrão deve ser Prefect Pony XL V6")
     assert_equal(default_spec["family"], "pony", "A família padrão deve ser Pony")
-    assert_equal(default_spec["engine"], "auraflow", "O engine padrão deve ser AuraFlow")
-    assert_equal(default_spec["repo"], "purplesmartai/pony-v7-base", "O repositório Diffusers do Pony deve ser preservado")
-    assert_equal(default_spec["civitai_model_id"], 1901521, "O ID do modelo Civitai deve ser preservado")
-    assert_equal(default_spec["version_id"], 2152373, "O ID da versão Civitai deve ser preservado")
-    assert_equal(server.public_model_spec(default_spec)["ready"], True, "O perfil AuraFlow deve aparecer como pronto quando o engine está configurado")
+    assert_equal(default_spec["engine"], "sdxl", "O engine padrão deve ser SDXL")
+    assert_equal(default_spec.get("repo", ""), "", "O perfil single-file não deve exigir um repositório Diffusers")
+    assert_equal(default_spec["civitai_model_id"], 439889, "O ID do modelo Civitai deve ser 439889")
+    assert_equal(default_spec["version_id"], 2114187, "O ID da versão Civitai deve ser 2114187")
+    assert_equal(server.public_model_spec(default_spec)["ready"], True, "O perfil SDXL deve aparecer como pronto")
     adaptive = server.validate_params({"prompt": "model profile test", "model": server.DEFAULT_MODEL_ID, "sampler": "euler_a"}, None)
     assert_equal(adaptive.model_id, server.DEFAULT_MODEL_ID, "Perfil de modelo deve ser preservado na validação")
     assert_equal(adaptive.sampler, "euler_a", "Sampler deve ser preservado na validação")
-    try:
-        server.validate_params({"prompt": "pony img2img", "model": server.DEFAULT_MODEL_ID, "mode": "img2img", "sampler": "euler_a"}, "/tmp/source.png")
-    except ValueError as error:
-        if "apenas o modo TXT→IMG" not in str(error):
-            raise AssertionError("IMG→IMG do Pony deve explicar a limitação AuraFlow") from error
-    else:
-        raise AssertionError("O perfil Pony/AuraFlow não deve aceitar IMG→IMG")
-    adaptive_high_res = server.validate_params({"prompt": "pony high resolution", "model": server.DEFAULT_MODEL_ID, "width": 1536, "height": 768, "sampler": "euler_a"}, None)
-    assert_equal(adaptive_high_res.width, 1536, "AuraFlow deve aceitar largura máxima oficial de 1536")
+    adaptive_img2img = server.validate_params({"prompt": "pony img2img", "model": server.DEFAULT_MODEL_ID, "mode": "img2img", "sampler": "euler_a"}, "/tmp/source.png")
+    assert_equal(adaptive_img2img.mode, "img2img", "SDXL Pony deve aceitar IMG→IMG")
+    adaptive_high_res = server.validate_params({"prompt": "pony high resolution", "model": server.DEFAULT_MODEL_ID, "width": 1024, "height": 768, "sampler": "euler_a"}, None)
+    assert_equal(adaptive_high_res.width, 1024, "SDXL deve aceitar largura máxima de 1024 no perfil padrão")
     if "MODELS_CONFIG" not in server_source or "delete_job" not in server_source:
         raise AssertionError("O servidor deve expor perfis configuráveis e exclusão remota")
 
@@ -171,9 +154,9 @@ def main() -> None:
     )
     assert_equal(alternate_profile.status_code, 200, "Perfil Pony alternativo deve ser aceito pela loja")
     alternate_json = alternate_profile.get_json()
-    assert_equal(alternate_json["engine"], "sdxl", "Somente o Pony V7 Base deve usar AuraFlow")
+    assert_equal(alternate_json["engine"], "sdxl", "Perfil Pony alternativo deve usar SDXL")
     if alternate_json.get("repo"):
-        raise AssertionError("Checkpoint Pony alternativo não deve herdar o repositório do Pony V7")
+        raise AssertionError("Checkpoint Pony alternativo não deve herdar um repositório Diffusers")
 
     boot = client.get("/api/bootstrap")
     assert_equal(boot.status_code, 200, "Bootstrap autenticado deve responder")

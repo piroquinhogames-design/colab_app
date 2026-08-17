@@ -12,7 +12,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Pony V7 Base e o pipeline AuraFlow são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar o catálogo Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
+O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Prefect Pony XL V6 e o pipeline SDXL single-file são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar o catálogo Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
 A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Diffusers 0.39.0**, **Accelerate 1.3.0+**, **Hugging Face Hub 0.34.0–0.x**, **hf-xet 1.1.0+**, **PEFT 0.17.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 
@@ -24,11 +24,11 @@ O painel usa a identidade **ModelLab Studio**, com tema escuro, camadas translú
 
 O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferece remix e possui um botão de exclusão que remove o registro local e, quando sincronizado, o PNG e o manifesto correspondente do MEGA.
 
-## Modelo padrão: Pony V7 Base
+## Modelo padrão: Prefect Pony XL V6
 
-O perfil inicial é **Pony V7 Base**, obtido do modelo Civitai `1901521`, versão `2152373`, com base declarada como **Pony**. O modelo é baseado em **AuraFlow**, e o runtime usa o repositório Diffusers oficial `purplesmartai/pony-v7-base`, que contém tokenizer, T5/text encoder, transformer, VAE e scheduler. O arquivo SafeTensor do Civitai é mantido como referência do perfil, mas não é carregado como um checkpoint SDXL isolado. O pipeline suporta text-to-image, LoRAs compatíveis e economia automática de memória para uma GPU T4; IMG→IMG fica bloqueado porque AuraFlow não oferece esse pipeline no projeto atual.
+O perfil inicial é **Prefect Pony XL V6**, obtido do modelo Civitai `439889`, versão `2114187`, com base declarada como **Pony**. Esse checkpoint é tratado como **SDXL single-file fp16**, carregado diretamente pelo `StableDiffusionXLPipeline` do Diffusers, com pipeline separado para IMG→IMG. O fluxo oferece TXT→IMG, IMG→IMG, LoRAs Pony/SDXL compatíveis e economia automática de memória para uma GPU T4.
 
-O endpoint oficial do transformer é `https://civitai.com/api/download/models/2152373`. O backend baixa esse arquivo com retomada HTTP (`Range`), normaliza o namespace `model.*` quando necessário e o converte diretamente para `AuraFlowTransformer2DModel`; se houver um `.part`, a transferência continua de onde parou. O Hub baixa somente os componentes auxiliares — configurações, tokenizer, T5/text encoder fp16 e VAE fp16 — com até oito transferências concorrentes e `HF_XET_HIGH_PERFORMANCE=1`. Assim, o sistema evita os três shards F32 do transformer, que somam aproximadamente 27 GB. O snapshot auxiliar é reutilizado nos jobs seguintes; se já existir um cache em `~/.cache/huggingface` da sessão anterior, ele é reaproveitado antes de criar `STUDIO_ROOT/huggingface-cache`. Em sessões persistentes, `HF_HOME` pode ser apontado para o Google Drive.
+O endpoint do checkpoint é `https://civitai.com/api/download/models/2114187?fileId=2008663`. O backend baixa o arquivo com retomada HTTP (`Range`) e preserva um `.part` quando a célula é interrompida. O arquivo completo fica em `STUDIO_ROOT/models/prefect_pony_v6.fp16.safetensors`; uma vez presente, o carregador não repete a transferência. O cache Hugging Face continua disponível para componentes auxiliares de outros perfis, mas o Prefect Pony XL V6 não exige um repositório Diffusers separado.
 
 ## Configurações, famílias e presets
 
@@ -37,12 +37,12 @@ Os modelos ficam ocultos no formulário principal e são administrados pela aba 
 | Família | Engine | Defaults iniciais | Loja de LoRAs |
 |---|---|---|---|
 | `sdxl-illustrious` | `sdxl` | 28 steps, CFG 6.5, Euler a | Illustrious |
-| `pony` | `auraflow` | 30 steps, CFG 5.5, Euler a | Pony |
+| `pony` | `sdxl` | 30 steps, CFG 5.5, Euler a | Pony |
 | `sdxl` | `sdxl` | 28 steps, CFG 6.5, Euler a | SDXL 1.0 |
 | `flux` | engine separado | 28 steps, CFG 3.5 | Flux |
 | `sd3` | engine separado | 28 steps, CFG 5.0 | SD 3 |
 
-Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los sem engines próprios. Isso evita incompatibilidades de arquitetura. O pipeline Pony/AuraFlow permite text-to-image; IMG→IMG é rejeitado explicitamente e as LoRAs precisam estar em formato compatível com AuraFlow/Pony.
+Os perfis `flux` e `sd3` podem aparecer na loja e ser catalogados, mas o backend não tenta gerá-los sem engines próprios. Isso evita incompatibilidades de arquitetura. O pipeline Pony/SDXL permite TXT→IMG e IMG→IMG; as LoRAs precisam estar em formato compatível com Pony/SDXL.
 
 ## Loja de modelos Civitai
 
@@ -52,7 +52,7 @@ Ao escolher **USAR ESTE PERFIL**, o servidor registra o modelo selecionado na se
 
 ## Loja de LoRAs e Loja de Prompts
 
-A loja de LoRAs começa em **Pony**, pois essa é a família do Pony V7 Base. Ao mudar o checkpoint para Pony, Illustrious ou SDXL, a busca usa automaticamente o `baseModels` correspondente e a interface atualiza o rótulo da família. Até três LoRAs podem ser usadas simultaneamente, com pesos entre 0 e 1,5.
+A loja de LoRAs começa em **Pony**, pois essa é a família do Prefect Pony XL V6. Ao mudar o checkpoint para Pony, Illustrious ou SDXL, a busca usa automaticamente o `baseModels` correspondente e a interface atualiza o rótulo da família. Até três LoRAs podem ser usadas simultaneamente, com pesos entre 0 e 1,5.
 
 A Loja de Prompts também recebe a família ativa. Ela usa metadados de recursos do Civitai quando disponíveis para descartar imagens associadas a outra família, preserva busca por texto, tags combináveis, ordenação e remix, e embaralha localmente os resultados quando o modo **ALEATÓRIO** é usado. Isso produz variação real sem perder os filtros de família.
 
@@ -92,10 +92,10 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 | Variável | Finalidade | Padrão |
 |---|---|---|
 | `MEGA_FOLDER` | Pasta remota para imagens e metadados | `ModelLabStudio` |
-| `MODEL_ID` | Identificador do perfil padrão | `pony-v7-base` |
-| `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/2152373` |
-| `MODEL_REPO` | Repositório Diffusers completo usado pelo Pony V7 | `purplesmartai/pony-v7-base` |
-| `MODEL_PATH` | Caminho de referência do arquivo Civitai | `/content/modellab-studio/models/pony_v7_base.safetensors` |
+| `MODEL_ID` | Identificador do perfil padrão | `prefect-pony-xl-v6` |
+| `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/2114187?fileId=2008663` |
+| `MODEL_REPO` | Repositório Diffusers auxiliar, não usado pelo perfil padrão | vazio |
+| `MODEL_PATH` | Caminho do checkpoint Civitai | `/content/modellab-studio/models/prefect_pony_v6.fp16.safetensors` |
 | `MODEL_FAMILY` | Família declarada do perfil padrão | `pony` |
 | `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
 | `STUDIO_ROOT` | Diretório temporário da sessão e cache padrão do Hub | `/content/modellab-studio` |

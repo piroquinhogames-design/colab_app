@@ -30,10 +30,9 @@ const EDIT_LEVELS = {
   high: {label: 'ALTO', strength: 0.85},
 };
 
-function syncResolutionOptions(engine) {
-  const auraFlow = String(engine || '').toLowerCase() === 'auraflow';
-  const minimum = auraFlow ? 768 : 512;
-  const maximum = auraFlow ? 1536 : 1024;
+function syncResolutionOptions(_engine) {
+  const minimum = 512;
+  const maximum = 1024;
   const sizes = Array.from({length: ((maximum - minimum) / 64) + 1}, (_, index) => minimum + index * 64);
   ['width', 'height'].forEach((id) => {
     const select = $(`#${id}`);
@@ -119,13 +118,6 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
   if (engine) engine.textContent = String(model.name || model.id).slice(0, 32).toUpperCase();
   if ($('#active-model-name')) $('#active-model-name').textContent = String(model.name || model.id).toUpperCase();
   if ($('#active-model-help')) $('#active-model-help').textContent = `${family} // ${model.engine || 'ENGINE'} // ${model.notes || 'defaults adaptativos ativos.'}`;
-  const img2imgButton = $('.mode[data-mode="img2img"]');
-  const auraFlowOnlyText = String(model.engine || '').toLowerCase() === 'auraflow';
-  if (img2imgButton) {
-    img2imgButton.disabled = auraFlowOnlyText;
-    img2imgButton.title = auraFlowOnlyText ? 'Pony V7 Base/AuraFlow suporta apenas TXT→IMG.' : '';
-  }
-  if (auraFlowOnlyText && state.mode === 'img2img') setMode('text2img', {silent: true});
   if ($('#settings-model-info')) $('#settings-model-info').textContent = `${family} // base ${model.base || '--'} // ${model.notes || 'perfil adaptativo'}`;
   if ($('#settings-engine-status')) $('#settings-engine-status').textContent = `ENGINE // ${String(model.engine || '--').toUpperCase()} // ${model.ready === false ? 'PENDENTE' : 'READY'}`;
   if ($('#catalog-family-label')) $('#catalog-family-label').textContent = family;
@@ -138,7 +130,7 @@ function renderModels(models, selectedId = '') {
   const select = $('#model');
   if (!select) return;
   if (!state.models.length) {
-    state.models = [{id: 'pony-v7-base', name: 'Pony V7 Base', family: 'pony', base: 'Pony', engine: 'auraflow', ready: true, cached: false, defaults: {steps: 30, guidance: 5.5, strength: .65, sampler: 'euler_a'}}];
+    state.models = [{id: 'prefect-pony-xl-v6', name: 'Prefect Pony XL V6', family: 'pony', base: 'Pony', engine: 'sdxl', ready: true, cached: false, defaults: {steps: 30, guidance: 5.5, strength: .65, sampler: 'euler_a'}}];
   }
   const options = state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)} · ${escapeHtml(String(model.family || 'sdxl').toUpperCase())}</option>`).join('');
   select.innerHTML = options;
@@ -150,11 +142,6 @@ function renderModels(models, selectedId = '') {
 }
 
 function setMode(mode, {silent = false} = {}) {
-  const selectedModel = state.models.find((item) => item.id === ($('#model')?.value || '')) || state.models[0];
-  if (mode === 'img2img' && String(selectedModel?.engine || '').toLowerCase() === 'auraflow') {
-    mode = 'text2img';
-    if (!silent) toast('O Pony V7 Base usa AuraFlow e suporta apenas TXT→IMG.', true);
-  }
   state.mode = mode;
   $$('.mode').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
   $('#upload-zone').classList.toggle('hidden', mode !== 'img2img');
@@ -394,10 +381,8 @@ function bindPromptStoreActions() {
 async function remixPromptStoreItem(index) {
   const item = state.promptStoreItems[index];
   if (!item?.prompt) return;
-  const auraFlow = String(activeModel().engine || '').toLowerCase() === 'auraflow';
   try {
-    let mode = auraFlow ? 'text2img' : 'img2img';
-    if (!auraFlow) {
+    const mode = 'img2img';
       const response = await fetch(`/api/prompt-store/image?url=${encodeURIComponent(item.image)}`);
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
@@ -409,17 +394,14 @@ async function remixPromptStoreItem(index) {
       transfer.items.add(file);
       $('#source-image').files = transfer.files;
       $('#upload-name').textContent = `PROMPT STORE // ${file.name}`;
-    }
-    const minimum = auraFlow ? 768 : 512;
-    const maximum = auraFlow ? 1536 : 1024;
-    const sizes = Array.from({length: ((maximum - minimum) / 64) + 1}, (_, offset) => minimum + offset * 64);
+    const sizes = Array.from({length: ((1024 - 512) / 64) + 1}, (_, offset) => 512 + offset * 64);
     const width = sizes.includes(Number(item.width)) ? Number(item.width) : 1024;
     const height = sizes.includes(Number(item.height)) ? Number(item.height) : 1024;
     restoreLastSettings({prompt: item.prompt, negative_prompt: item.negative_prompt || '', seed: -1, steps: Number(item.steps) || 28, guidance: Number(item.guidance) || 6.5, width, height, strength: .55, mode, edit_level: 'medium', loras: item.loras || []});
     setMode(mode);
     $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
     $('#prompt-store-dialog').close();
-    toast(auraFlow ? 'Prompt e recursos carregados para TXT→IMG no AuraFlow.' : 'Prompt, imagem de referência e recursos disponíveis carregados para remix.');
+    toast('Prompt, imagem de referência e recursos disponíveis carregados para remix.');
     log(`Remix da Loja de Prompts ${String(item.id || '').slice(0, 10)} preparado.`);
   } catch (error) { toast(error.message, true); }
 }
@@ -504,10 +486,8 @@ function openImagePreview(jobId) {
 async function remixHistoryJob(jobId) {
   const job = historyJob(jobId);
   if (!job) return;
-  const auraFlow = String(activeModel().engine || '').toLowerCase() === 'auraflow';
   try {
-    let mode = auraFlow ? 'text2img' : 'img2img';
-    if (!auraFlow) {
+    const mode = 'img2img';
       const response = await fetch(`/api/history/${encodeURIComponent(job.id)}/image`);
       if (!response.ok) throw new Error('A imagem arquivada não está disponível para remix.');
       const blob = await response.blob();
@@ -517,12 +497,11 @@ async function remixHistoryJob(jobId) {
       const source = $('#source-image');
       source.files = transfer.files;
       $('#upload-name').textContent = `REMIX // ${file.name}`;
-    }
     restoreLastSettings({...job.params, mode, seed: -1, edit_level: job.params?.edit_level || 'medium'});
     setMode(mode);
     $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
     if ($('#image-dialog').open) $('#image-dialog').close();
-    toast(auraFlow ? 'Prompt e parâmetros carregados para TXT→IMG no AuraFlow.' : 'Materiais carregados: prompt, LoRAs, parâmetros e imagem-base. Seed definida como aleatória.');
+    toast('Materiais carregados: prompt, LoRAs, parâmetros e imagem-base. Seed definida como aleatória.');
     log(`Remix preparado a partir do job ${String(job.id).slice(0, 8)}.`);
   } catch (error) { toast(error.message, true); }
 }

@@ -45,7 +45,7 @@
           </div>
 
           <div class="model-context panel-inset">
-            <div><span class="field-label">MODELO ATIVO</span><strong id="active-model-name">PONY V7 BASE</strong><small id="active-model-help">Família Pony // defaults adaptativos ativos.</small></div>
+            <div><span class="field-label">MODELO ATIVO</span><strong id="active-model-name">PREFECT PONY XL V6</strong><small id="active-model-help">Família Pony // defaults adaptativos ativos.</small></div>
             <div class="model-context-status"><span id="model-badge" class="model-badge">PONY // PERFIL ADAPTATIVO</span><button id="open-model-settings-inline" type="button" class="text-button">⚙ CONFIGURAR</button></div>
           </div>
           <div class="model-control hidden" aria-hidden="true">
@@ -87,8 +87,8 @@
             <label class="control"><span>SEED</span><input id="seed" type="number" min="-1" max="4294967295" value="-1" /><small>-1 = aleatória</small></label>
             <label class="control"><span>STEPS <output id="steps-value">28</output></span><input id="steps" type="range" min="10" max="60" value="28" /></label>
             <label class="control"><span>GUIDANCE <output id="guidance-value">6.5</output></span><input id="guidance" type="range" min="1" max="15" step="0.5" value="6.5" /></label>
-            <label class="control"><span>WIDTH</span><select id="width"><option selected>768</option><option>832</option><option>896</option><option>960</option><option>1024</option><option>1088</option><option>1152</option><option>1216</option><option>1280</option><option>1344</option><option>1408</option><option>1472</option><option>1536</option></select></label>
-            <label class="control"><span>HEIGHT</span><select id="height"><option selected>768</option><option>832</option><option>896</option><option>960</option><option>1024</option><option>1088</option><option>1152</option><option>1216</option><option>1280</option><option>1344</option><option>1408</option><option>1472</option><option>1536</option></select></label>
+            <label class="control"><span>WIDTH</span><select id="width"><option selected>512</option><option>576</option><option>640</option><option>704</option><option>768</option><option>832</option><option>896</option><option>960</option><option>1024</option></select></label>
+            <label class="control"><span>HEIGHT</span><select id="height"><option selected>512</option><option>576</option><option>640</option><option>704</option><option>768</option><option>832</option><option>896</option><option>960</option><option>1024</option></select></label>
             <label class="control strength-control"><span>FORÇA / DENOISE <output id="strength-value">0.65</output></span><input id="strength" type="range" min="0.05" max="1" step="0.05" value="0.65" /></label>
           </div>
 
@@ -129,7 +129,7 @@
       <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / CHECKPOINT MARKET ]</p><h2>LOJA DE MODELOS</h2><p class="store-lead">Pesquise checkpoints por família. Ao instalar um perfil, o ModelLab aplica automaticamente engine, sampler, steps, CFG e filtros de LoRA compatíveis.</p></div><button id="close-model-store" type="button" class="close-button" aria-label="Fechar loja de modelos">×</button></div>
       <div class="catalog-filters model-store-filters"><input id="model-store-query" type="search" placeholder="BUSCAR CHECKPOINT OU AUTOR" /><input id="model-store-tag" type="text" placeholder="TAG OPCIONAL" /><select id="model-store-family" aria-label="Família do modelo"><option value="">TODAS AS FAMÍLIAS</option><option value="sdxl-illustrious">ILLUSTRIOUS / NOOBAI</option><option value="pony" selected>PONY</option><option value="sdxl">SDXL</option><option value="flux">FLUX</option><option value="sd3">SD 3</option></select><select id="model-store-sort"><option value="Most Downloaded">MAIS BAIXADOS</option><option value="Highest Rated">MELHOR AVALIADOS</option><option value="Newest">MAIS NOVOS</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="model-store-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="search-model-store" class="signal-button small" type="button">CONSULTAR</button></div>
       <div id="model-store-grid" class="catalog-grid"><p class="catalog-empty">Escolha uma família para consultar checkpoints.</p></div>
-      <div class="catalog-footer"><span id="model-store-note">Família inicial: Pony // Pony V7 Base.</span><button id="next-model-store" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
+      <div class="catalog-footer"><span id="model-store-note">Família inicial: Pony // Prefect Pony XL V6.</span><button id="next-model-store" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
     </dialog>
 
     <dialog id="catalog-dialog" class="catalog-dialog">

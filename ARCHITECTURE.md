@@ -6,7 +6,7 @@ O pacote é executado integralmente em uma sessão Google Colab com GPU T4. O pr
 
 O formulário principal mostra somente o modelo ativo. Checkpoint, sampler e loja de modelos ficam no diálogo **Configurações**. O bootstrap envia os perfis públicos com família, base, engine, disponibilidade, cache e defaults. A interface aplica o preset do perfil e atualiza automaticamente os rótulos e as lojas de LoRAs e prompts.
 
-O perfil inicial é `pony-v7-base`, com base `Pony`, modelo Civitai `1901521`, versão `2152373` e engine `auraflow`. O runtime baixa o safetensor do Civitai com retomada HTTP e converte-o via `AuraFlowTransformer2DModel.from_single_file()`. Em paralelo, `snapshot_download()` busca somente JSONs, tokenizer, T5 fp16 e VAE fp16, com até oito workers, cache em `HF_HUB_CACHE` e `HF_XET_HIGH_PERFORMANCE=1`; o transformer F32 em três shards não é baixado. Em seguida, `AuraFlowPipeline.from_pretrained()` recebe o transformer convertido e os componentes auxiliares locais. O fluxo atual oferece TXT→IMG, e IMG→IMG é bloqueado para AuraFlow.
+O perfil inicial é `prefect-pony-xl-v6`, com base `Pony`, modelo Civitai `439889`, versão `2114187` e engine `sdxl`. O runtime baixa o arquivo SafeTensor single-file do Civitai com retomada HTTP e cria as pipelines `StableDiffusionXLPipeline` e `StableDiffusionXLImg2ImgPipeline` diretamente a partir do checkpoint fp16. O fluxo oferece TXT→IMG e IMG→IMG; o cache Hugging Face permanece disponível para perfis que precisem de componentes auxiliares, mas não é exigido pelo perfil padrão.
 
 ## Catálogo Civitai
 
@@ -22,12 +22,12 @@ A rota `GET /api/prompt-store` também recebe a família ativa. O servidor consu
 
 ## Engines e perfis
 
-O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `auraflow`, descarrega o pipeline anterior, libera a memória CUDA, retoma o checkpoint Civitai se houver `.part`, garante o snapshot auxiliar filtrado no cache compartilhado e carrega o pipeline localmente; jobs seguintes não repetem os downloads. Para `sdxl`, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
+O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, retoma o checkpoint Civitai se houver `.part` e cria as pipelines text-to-image e image-to-image; jobs seguintes não repetem o download. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
 
 | Família | Engine | Loja de LoRAs | Estado padrão |
 |---|---|---|---|
 | `sdxl-illustrious` | `sdxl` | Illustrious | Geração disponível com pipeline SDXL |
-| `pony` | `auraflow` | Pony | Geração disponível com AuraFlow em TXT→IMG |
+| `pony` | `sdxl` | Pony | Geração disponível com SDXL em TXT→IMG e IMG→IMG |
 | `sdxl` | `sdxl` | SDXL 1.0 | Geração disponível com pipeline SDXL |
 | `flux` | engine separado | Flux | Catalogável; geração bloqueada |
 | `sd3` | engine separado | SD 3 | Catalogável; geração bloqueada |
@@ -60,7 +60,7 @@ A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execu
   "params": {
     "prompt": "...",
     "negative_prompt": "...",
-    "model": "pony-v7-base",
+    "model": "prefect-pony-xl-v6",
     "sampler": "euler_a",
     "seed": 123456,
     "mode": "text2img | img2img",
@@ -76,4 +76,4 @@ A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execu
 }
 ```
 
-O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels para SDXL e entre 768 e 1536 pixels para AuraFlow, 10–60 steps e escala de guidance entre 1 e 15. O Pony V7/AuraFlow aceita somente TXT→IMG no fluxo atual. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.
+O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels para SDXL, 10–60 steps e escala de guidance entre 1 e 15. O Prefect Pony XL V6 aceita TXT→IMG e IMG→IMG no fluxo atual. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.

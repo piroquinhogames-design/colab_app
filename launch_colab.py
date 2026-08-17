@@ -70,13 +70,13 @@ def validate_runtime() -> None:
     diffusers_version = Version(diffusers.__version__)
     if diffusers_version < Version("0.39.0"):
         raise RuntimeError(
-            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline Pony/AuraFlow. "
+            f"Diffusers incompatível: encontrado {diffusers.__version__}, mínimo 0.39.0 para o pipeline SDXL/Pony. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     transformers_version = Version(importlib.metadata.version("transformers"))
     if transformers_version < Version("4.51.0"):
         raise RuntimeError(
-            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para o pipeline Pony/AuraFlow. "
+            f"Transformers incompatível: encontrado {transformers_version}, mínimo 4.51.0 para o pipeline SDXL/Pony. "
             "Reinicie o ambiente Colab e execute esta célula novamente."
         )
     print(
@@ -152,9 +152,8 @@ def main() -> None:
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
 
-    # Configuração técnica padronizada: Pony V7 Base usa AuraFlow e precisa do
-    # repositório Diffusers completo, pois o arquivo Civitai não contém sozinho
-    # tokenizer, T5/text_encoder, VAE, scheduler e transformer.
+    # Configuração técnica padronizada: Prefect Pony XL V6 é um checkpoint
+    # SDXL single-file fp16 e pode ser carregado diretamente pelo Diffusers.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
     if "HF_HOME" not in os.environ:
         legacy_hf_home = Path.home() / ".cache" / "huggingface"
@@ -164,12 +163,14 @@ def main() -> None:
     os.environ.setdefault("HF_HUB_CACHE", f"{os.environ['HF_HOME']}/hub")
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
-    os.environ.setdefault("MODEL_ID", "pony-v7-base")
-    os.environ.setdefault("MODEL_URL", "https://civitai.com/api/download/models/2152373")
-    os.environ.setdefault("MODEL_REPO", "purplesmartai/pony-v7-base")
-    os.environ.setdefault("MODEL_PATH", f"{os.environ["STUDIO_ROOT"]}/models/pony_v7_base.safetensors")
-    os.environ.setdefault("MODEL_FAMILY", "pony")
-    print("[setup] Perfil Pony V7 Base padronizado; AuraFlow + cache HF/Xet de alto desempenho configurados.")
+    # Substitui defaults antigos persistidos no runtime; perfis customizados ainda
+    # podem ser fornecidos por MODELS_CONFIG.
+    os.environ["MODEL_ID"] = "prefect-pony-xl-v6"
+    os.environ["MODEL_URL"] = "https://civitai.red/api/download/models/2114187?fileId=2008663"
+    os.environ["MODEL_REPO"] = ""
+    os.environ["MODEL_PATH"] = f"{os.environ["STUDIO_ROOT"]}/models/prefect_pony_v6.fp16.safetensors"
+    os.environ["MODEL_FAMILY"] = "pony"
+    print("[setup] Perfil Prefect Pony XL V6 padronizado; SDXL single-file + cache HTTP/HF configurados.")
 
     install_requirements()
     validate_runtime()
