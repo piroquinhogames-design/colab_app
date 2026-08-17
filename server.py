@@ -42,9 +42,11 @@ from PIL import Image
 
 ROOT = Path(os.environ.get("STUDIO_ROOT", "/content/modellab-studio")).resolve()
 # O cache fica fora do diretório do checkpoint para permitir trocar o perfil sem
-# duplicar os shards. HF_HOME/HF_HUB_CACHE podem apontar para um Drive persistente.
-HF_HOME = Path(os.environ.get("HF_HOME", ROOT / "huggingface-cache")).resolve()
-HF_HUB_CACHE = Path(os.environ.get("HF_HUB_CACHE", HF_HOME / "hub")).resolve()
+# duplicar os shards. Se houver um cache da execução anterior, ele é reaproveitado.
+legacy_hf_home = Path.home() / ".cache" / "huggingface"
+default_hf_home = ROOT / "huggingface-cache"
+HF_HOME = Path(os.environ.get("HF_HOME") or (legacy_hf_home if legacy_hf_home.exists() else default_hf_home)).resolve()
+HF_HUB_CACHE = Path(os.environ.get("HF_HUB_CACHE") or (HF_HOME / "hub")).resolve()
 os.environ.setdefault("HF_HOME", str(HF_HOME))
 os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE))
 os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")

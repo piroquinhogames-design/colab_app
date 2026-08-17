@@ -156,7 +156,11 @@ def main() -> None:
     # repositório Diffusers completo, pois o arquivo Civitai não contém sozinho
     # tokenizer, T5/text_encoder, VAE, scheduler e transformer.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
-    os.environ.setdefault("HF_HOME", f"{os.environ['STUDIO_ROOT']}/huggingface-cache")
+    if "HF_HOME" not in os.environ:
+        legacy_hf_home = Path.home() / ".cache" / "huggingface"
+        default_hf_home = Path(os.environ["STUDIO_ROOT"]) / "huggingface-cache"
+        # Reaproveita downloads feitos pela execução anterior antes de criar um cache novo.
+        os.environ["HF_HOME"] = str(legacy_hf_home if legacy_hf_home.exists() else default_hf_home)
     os.environ.setdefault("HF_HUB_CACHE", f"{os.environ['HF_HOME']}/hub")
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
