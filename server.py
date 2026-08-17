@@ -757,6 +757,19 @@ class GeneratorEngine:
         except Exception:
             return None
 
+    @staticmethod
+    def _extract_first_image(result: Any) -> Image.Image:
+        """Obtém a primeira imagem das saídas padrão dos pipelines Diffusers."""
+        images = getattr(result, "images", None)
+        if images is None and isinstance(result, dict):
+            images = result.get("images")
+        if not images:
+            raise RuntimeError("O pipeline não retornou nenhuma imagem.")
+        image = images[0]
+        if not isinstance(image, Image.Image):
+            raise RuntimeError("O pipeline retornou uma imagem em formato não suportado.")
+        return image.convert("RGB")
+
     def generate(self, job: Job, update: Callable[[int, float | None], None]) -> Path:
         import torch
 

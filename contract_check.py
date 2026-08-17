@@ -97,6 +97,13 @@ def main() -> None:
         raise AssertionError("O bootstrap deve expor quando a preparação do MEGA terminou")
     if "_prepare_lora_file" not in server_source or "_is_unsupported_lora_key" not in server_source:
         raise AssertionError("O servidor deve preparar LoRAs com metadados alpha incompatíveis")
+    sample_image = server.Image.new("RGBA", (2, 2), (255, 0, 0, 128))
+    extracted = server.GeneratorEngine._extract_first_image(types.SimpleNamespace(images=[sample_image]))
+    if extracted.mode != "RGB" or extracted.size != (2, 2):
+        raise AssertionError("O extrator deve devolver a primeira imagem em RGB")
+    extracted_from_dict = server.GeneratorEngine._extract_first_image({"images": [sample_image]})
+    if extracted_from_dict.mode != "RGB":
+        raise AssertionError("O extrator deve aceitar o formato de dicionário")
     if not server.GeneratorEngine._is_unsupported_lora_key("lora_unet_label_emb_0_0.alpha"):
         raise AssertionError("A chave alpha problemática deve ser identificada")
     app_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
