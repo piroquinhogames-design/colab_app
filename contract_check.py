@@ -44,6 +44,9 @@ def assert_equal(actual, expected, message: str) -> None:
 def main() -> None:
     package_root = Path(__file__).resolve().parent
     requirements = (package_root / "requirements.txt").read_text(encoding="utf-8")
+    comfy_requirements = (package_root / "comfy_requirements.txt").read_text(encoding="utf-8")
+    if "trampoline==0.1.2" not in comfy_requirements:
+        raise AssertionError("A lista do ComfyUI deve fixar trampoline para satisfazer torchsde quando usa --no-deps")
     if "peft" in requirements.lower() or "diffusers" in requirements.lower() or "accelerate" in requirements.lower():
         raise AssertionError("O backend headless não deve instalar dependências exclusivas do Diffusers/PEFT")
     if "huggingface-hub>=0.34.0,<1.0" not in requirements:
@@ -71,6 +74,8 @@ def main() -> None:
         raise AssertionError("O runtime deve confirmar Safetensors 0.8.0+ para o loader Anima")
     if "from Crypto.Cipher import AES" not in launcher_source:
         raise AssertionError("O runtime deve validar o módulo Crypto exigido pelo cliente MEGA")
+    if "import trampoline" not in launcher_source:
+        raise AssertionError("O runtime deve validar trampoline antes de iniciar o ComfyUI")
     server_source = (package_root / "server.py").read_text(encoding="utf-8")
     backend_source = (package_root / "comfy_backend.py").read_text(encoding="utf-8")
     if "ComfyBackend" not in server_source or not (package_root / "comfy_memory_node.py").exists():

@@ -76,6 +76,12 @@ def validate_runtime() -> None:
         raise RuntimeError(
             "PyCryptodome não foi carregado; reinicie o runtime Colab e execute a célula novamente."
         ) from error
+    try:
+        import trampoline  # noqa: F401
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "A dependência trampoline não foi instalada; execute novamente o launcher para corrigir o ambiente."
+        ) from error
     if not torch.cuda.is_available():
         raise RuntimeError("GPU CUDA não encontrada. Selecione T4 no Colab e reinicie o ambiente.")
     from packaging.version import Version

@@ -32,3 +32,11 @@ A issue #12230 do ComfyUI registra que Anima aparentava exigir BF16 e pergunta s
 Checagem adicional: a API do modelo Civitai `2356447` retorna `RDBT | Anima`, um checkpoint/finetune baseado em Anima com versões múltiplas; a rota direta `/api/v1/model-versions/2652286` retornou `Model not found`. Portanto, a issue do ComfyUI aponta um recurso Civitai que não está mais resolvendo por esse endpoint, e ele não deve ser baixado ou tratado como requisito do Nova EXAnime AM sem uma fonte atualizada. A implementação deve depender do comportamento do ComfyUI/loader disponível, não desse ID obsoleto.
 
 ComfyUI inspecionado localmente a partir de https://github.com/comfyanonymous/ComfyUI (clone shallow em 2026-08-17; o comando exibiu o commit atual). O código contém suporte interno a `lowvram`/patches parciais, mas a meta do usuário é não retirar carga da GPU, portanto essa opção não deve ser habilitada no perfil padrão. A implementação deverá consultar/usar flags reais do launcher e manter o carregamento residente quando a VRAM permitir; não usar `/free` nem descarregar o modelo entre jobs.
+
+## Diagnóstico do erro `trampoline` (17/08/2026)
+
+O traceback do Colab mostra que o ComfyUI falha ao importar `comfy.samplers`, que importa `k_diffusion.sampling`, antes de abrir a API. A falha final é `ModuleNotFoundError: No module named 'trampoline'` dentro do ambiente Python.
+
+A documentação pública do ComfyUI lista `torchsde` como dependência direta do backend. A página oficial do PyPI para `torchsde` identifica o pacote como o solver SDE usado com PyTorch; a listagem de dependências do PyPI também indica `trampoline` como dependência. O PyPI publica `trampoline` 0.1.2 como pacote Python puro. Portanto, a correção deve instalar explicitamente `trampoline` (ou instalar `torchsde` com dependências) usando o mesmo interpretador do Colab, sem reinstalar torch, torchvision ou torchaudio.
+
+Fontes consultadas: https://pypi.org/project/torchsde/ ; https://pypi.org/project/trampoline/ ; https://github.com/comfyanonymous/ComfyUI/blob/master/requirements.txt
