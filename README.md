@@ -14,7 +14,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 
 O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil Pony V7 Base e o pipeline AuraFlow são configurados automaticamente com valores padronizados; não é necessário conhecer essa parte técnica. O token é utilizado apenas pelo processo do servidor para consultar o catálogo Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
-A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Diffusers 0.39.0**, **Accelerate 1.3.0+**, **Hugging Face Hub 0.34.0–0.x**, **PEFT 0.17.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
+A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Diffusers 0.39.0**, **Accelerate 1.3.0+**, **Hugging Face Hub 0.34.0–0.x**, **hf-xet 1.1.0+**, **PEFT 0.17.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 
 > Se uma sessão anterior instalou uma versão incompatível de PyTorch, use **Ambiente de execução → Desconectar e excluir ambiente de execução** antes de executar o setup novamente.
 
@@ -28,7 +28,7 @@ O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferec
 
 O perfil inicial é **Pony V7 Base**, obtido do modelo Civitai `1901521`, versão `2152373`, com base declarada como **Pony**. O modelo é baseado em **AuraFlow**, e o runtime usa o repositório Diffusers oficial `purplesmartai/pony-v7-base`, que contém tokenizer, T5/text encoder, transformer, VAE e scheduler. O arquivo SafeTensor do Civitai é mantido como referência do perfil, mas não é carregado como um checkpoint SDXL isolado. O pipeline suporta text-to-image, LoRAs compatíveis e economia automática de memória para uma GPU T4; IMG→IMG fica bloqueado porque AuraFlow não oferece esse pipeline no projeto atual.
 
-O endpoint oficial de download é `https://civitai.com/api/download/models/2152373`. O inicializador define automaticamente o perfil, a família e o caminho de cache, portanto o usuário comum não precisa configurar esses valores manualmente.
+O endpoint oficial de download é `https://civitai.com/api/download/models/2152373`. O inicializador define automaticamente o perfil, a família e o caminho de cache, portanto o usuário comum não precisa configurar esses valores manualmente. Na primeira geração, o Hub baixa apenas configurações, tokenizers e arquivos SafeTensors necessários, com até oito transferências concorrentes e `HF_XET_HIGH_PERFORMANCE=1`. O snapshot fica em `STUDIO_ROOT/huggingface-cache` e é reutilizado nos jobs seguintes; em sessões persistentes, `HF_HOME` pode ser apontado para o Google Drive.
 
 ## Configurações, famílias e presets
 
@@ -98,7 +98,10 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 | `MODEL_PATH` | Caminho de referência do arquivo Civitai | `/content/modellab-studio/models/pony_v7_base.safetensors` |
 | `MODEL_FAMILY` | Família declarada do perfil padrão | `pony` |
 | `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
-| `STUDIO_ROOT` | Diretório temporário da sessão | `/content/modellab-studio` |
+| `STUDIO_ROOT` | Diretório temporário da sessão e cache padrão do Hub | `/content/modellab-studio` |
+| `HF_HOME` | Raiz opcional para cache persistente do Hugging Face | `STUDIO_ROOT/huggingface-cache` |
+| `HF_HUB_CACHE` | Cache de snapshots do Hub | `HF_HOME/hub` |
+| `HF_XET_HIGH_PERFORMANCE` | Transferência Xet de alto desempenho | `1` |
 | `PORT` | Porta local do Flask | `7860` |
 
 ## Limites operacionais

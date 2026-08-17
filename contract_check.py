@@ -50,6 +50,8 @@ def main() -> None:
         raise AssertionError("Accelerate deve ser fixado para suportar offload no Colab")
     if "huggingface-hub>=0.34.0,<1.0" not in requirements:
         raise AssertionError("O Hub deve permanecer na série 0.x compatível com Transformers")
+    if "hf-xet>=1.1.0,<2.0" not in requirements:
+        raise AssertionError("hf-xet deve estar instalado para acelerar transferências do Hub")
     if "pycryptodome==3.21.0" not in requirements:
         raise AssertionError("O pacote deve instalar pycryptodome para o módulo Crypto exigido pelo MEGA")
     if any(line.strip().startswith("torch") for line in requirements.splitlines()):
@@ -82,6 +84,10 @@ def main() -> None:
         or "StableDiffusionXLPipeline.from_single_file" not in server_source
         or "torch.float16" not in server_source
         or "callback_on_step_end" not in server_source
+        or "snapshot_download" not in server_source
+        or "allow_patterns" not in server_source
+        or "max_workers=8" not in server_source
+        or "HF_XET_HIGH_PERFORMANCE" not in server_source
         or "enable_tiling" not in server_source
         or "_extract_first_image" not in server_source
         or "from diffusers import ModularPipeline" in server_source

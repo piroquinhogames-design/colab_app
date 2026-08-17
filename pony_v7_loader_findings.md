@@ -43,3 +43,14 @@ A documentação oficial em https://huggingface.co/docs/diffusers/api/pipelines/
 A implementação de `AuraFlowPipeline.__call__` em Diffusers 0.39.0 aceita `callback_on_step_end` e o invoca como `callback(self, step_index, timestep, callback_kwargs)`, retornando um dicionário que pode atualizar `latents` e `prompt_embeds`. O callback atual do backend preserva e devolve `callback_kwargs`, portanto é compatível com esse contrato de quatro argumentos.
 
 Fonte: pacote `diffusers==0.39.0`, arquivo `diffusers/pipelines/aura_flow/pipeline_aura_flow.py`, método `AuraFlowPipeline.__call__`.
+
+## Otimização de download — Hugging Face Hub
+
+A documentação oficial informa que `snapshot_download()` baixa os arquivos de um repositório de forma concorrente e reaproveita o cache local. Ela também permite limitar o conteúdo com `allow_patterns` e `ignore_patterns`, evitando artefatos não necessários ao pipeline. O cache pode ser persistido por `HF_HOME` ou `HF_HUB_CACHE`.
+
+Na versão atual do Hub, `hf-xet` é o caminho recomendado para transferências de alto desempenho; `HF_XET_HIGH_PERFORMANCE=1` substitui a configuração legada `HF_HUB_ENABLE_HF_TRANSFER`, que está depreciada. O projeto passou a usar cache no diretório do estúdio, download seletivo dos arquivos JSON/SafeTensors/tokenizer e até oito workers concorrentes.
+
+Fontes:
+1. https://huggingface.co/docs/huggingface_hub/en/guides/download
+2. https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables
+3. https://huggingface.co/docs/huggingface_hub/en/concepts/migration

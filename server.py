@@ -41,11 +41,18 @@ from PIL import Image
 
 
 ROOT = Path(os.environ.get("STUDIO_ROOT", "/content/modellab-studio")).resolve()
+# O cache fica fora do diretório do checkpoint para permitir trocar o perfil sem
+# duplicar os shards. HF_HOME/HF_HUB_CACHE podem apontar para um Drive persistente.
+HF_HOME = Path(os.environ.get("HF_HOME", ROOT / "huggingface-cache")).resolve()
+HF_HUB_CACHE = Path(os.environ.get("HF_HUB_CACHE", HF_HOME / "hub")).resolve()
+os.environ.setdefault("HF_HOME", str(HF_HOME))
+os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE))
+os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
 MODELS = ROOT / "models"
 LORAS = ROOT / "loras"
 OUTPUTS = ROOT / "outputs"
 UPLOADS = ROOT / "uploads"
-for directory in (MODELS, LORAS, OUTPUTS, UPLOADS):
+for directory in (MODELS, LORAS, OUTPUTS, UPLOADS, HF_HUB_CACHE):
     directory.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
@@ -616,6 +623,20 @@ class GeneratorEngine:
         return model_path
 
     @staticmethod
+    def _download_auraflow_snapshot(repo: str) -> str:
+        """Baixa somente arquivos necessários e reaproveita o cache entre jobs."""
+        from huggingface_hub import snapshot_download
+
+        snapshot = snapshot_download(
+            repo_id=repo,
+            cache_dir=str(HF_HUB_CACHE),
+            allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt", "*.jinja"],
+            ignore_patterns=["*.bin", "*.ckpt", "*.pt", "*.onnx", "*.msgpack", "*.h5"],
+            max_workers=8,
+        )
+        return str(snapshot)
+
+    @staticmethod
     def _configure_memory_savers(pipeline: Any) -> None:
         """Configura economia de VRAM para pipelines DiffusionPipeline clássicas."""
         if hasattr(pipeline, "enable_attention_slicing"):
@@ -659,8 +680,9 @@ class GeneratorEngine:
             try:
                 # Pony V7 é AuraFlow e precisa do layout Diffusers completo:
                 # T5/text_encoder, tokenizer, transformer, VAE e scheduler.
+                snapshot = self._download_auraflow_snapshot(repo)
                 self.pipe = AuraFlowPipeline.from_pretrained(
-                    repo, torch_dtype=torch.float16, use_safetensors=True
+                    snapshot, torch_dtype=torch.float16, use_safetensors=True, local_files_only=True
                 )
                 self._configure_memory_savers(self.pipe)
                 self.loaded_model_id = spec["id"]

@@ -6,7 +6,7 @@ O pacote é executado integralmente em uma sessão Google Colab com GPU T4. O pr
 
 O formulário principal mostra somente o modelo ativo. Checkpoint, sampler e loja de modelos ficam no diálogo **Configurações**. O bootstrap envia os perfis públicos com família, base, engine, disponibilidade, cache e defaults. A interface aplica o preset do perfil e atualiza automaticamente os rótulos e as lojas de LoRAs e prompts.
 
-O perfil inicial é `pony-v7-base`, com base `Pony`, modelo Civitai `1901521`, versão `2152373` e engine `auraflow`. O runtime carrega `AuraFlowPipeline.from_pretrained("purplesmartai/pony-v7-base")`, pois o Pony V7 exige o repositório Diffusers completo com tokenizer, T5/text encoder, transformer, VAE e scheduler. O arquivo SafeTensor do Civitai permanece como referência do perfil; o fluxo atual oferece TXT→IMG, e IMG→IMG é bloqueado para AuraFlow.
+O perfil inicial é `pony-v7-base`, com base `Pony`, modelo Civitai `1901521`, versão `2152373` e engine `auraflow`. O runtime baixa via `snapshot_download()` somente JSONs, tokenizers e SafeTensors necessários, com até oito workers, cache em `HF_HUB_CACHE` e `HF_XET_HIGH_PERFORMANCE=1`; em seguida carrega `AuraFlowPipeline.from_pretrained()` a partir do snapshot local. O Pony V7 exige o repositório Diffusers completo com tokenizer, T5/text encoder, transformer, VAE e scheduler. O arquivo SafeTensor do Civitai permanece como referência do perfil; o fluxo atual oferece TXT→IMG, e IMG→IMG é bloqueado para AuraFlow.
 
 ## Catálogo Civitai
 
@@ -22,7 +22,7 @@ A rota `GET /api/prompt-store` também recebe a família ativa. O servidor consu
 
 ## Engines e perfis
 
-O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `auraflow`, descarrega o pipeline anterior, libera a memória CUDA e carrega o repositório Diffusers completo do Pony V7. Para `sdxl`, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
+O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `auraflow`, descarrega o pipeline anterior, libera a memória CUDA, garante no cache compartilhado o snapshot Diffusers filtrado do Pony V7 e carrega o pipeline localmente; jobs seguintes não repetem o download. Para `sdxl`, garante o checkpoint e cria as pipelines text-to-image e image-to-image. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
 
 | Família | Engine | Loja de LoRAs | Estado padrão |
 |---|---|---|---|

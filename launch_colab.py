@@ -156,13 +156,16 @@ def main() -> None:
     # repositório Diffusers completo, pois o arquivo Civitai não contém sozinho
     # tokenizer, T5/text_encoder, VAE, scheduler e transformer.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
+    os.environ.setdefault("HF_HOME", f"{os.environ['STUDIO_ROOT']}/huggingface-cache")
+    os.environ.setdefault("HF_HUB_CACHE", f"{os.environ['HF_HOME']}/hub")
+    os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
     os.environ.setdefault("MODEL_ID", "pony-v7-base")
     os.environ.setdefault("MODEL_URL", "https://civitai.com/api/download/models/2152373")
     os.environ.setdefault("MODEL_REPO", "purplesmartai/pony-v7-base")
     os.environ.setdefault("MODEL_PATH", f"{os.environ["STUDIO_ROOT"]}/models/pony_v7_base.safetensors")
     os.environ.setdefault("MODEL_FAMILY", "pony")
-    print("[setup] Perfil Pony V7 Base padronizado; pipeline AuraFlow configurado automaticamente.")
+    print("[setup] Perfil Pony V7 Base padronizado; AuraFlow + cache HF/Xet de alto desempenho configurados.")
 
     install_requirements()
     validate_runtime()
