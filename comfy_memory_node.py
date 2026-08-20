@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import os
 
 
 class ModelLabMemoryCleanup:
@@ -13,9 +14,14 @@ class ModelLabMemoryCleanup:
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "cleanup"
     CATEGORY = "ModelLab/memory"
-    DESCRIPTION = "Libera temporários ociosos; não descarrega modelos da GPU."
+    DESCRIPTION = "Passa a imagem sem bloquear a conclusão; limpeza CUDA é opcional."
 
     def cleanup(self, image):
+        # Este node fica no caminho crítico antes do SaveImage. A limpeza
+        # explícita do allocator pode sincronizar a T4 por minutos depois de
+        # uma renderização 1024x1024; por padrão, apenas encaminhamos a imagem.
+        if os.environ.get("MODELLAB_CLEANUP_CUDA", "0").strip().lower() not in {"1", "true", "yes"}:
+            return (image,)
         gc.collect()
         try:
             import torch

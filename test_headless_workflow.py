@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 
 from comfy_backend import ComfyBackend
+from comfy_memory_node import ModelLabMemoryCleanup
 
 with TemporaryDirectory() as temporary:
     install_root = Path(temporary)
@@ -18,6 +19,9 @@ with TemporaryDirectory() as temporary:
 
 root = Path('/tmp/modellab-headless-test')
 backend = ComfyBackend(root, root / 'runtime', 8188)
+os.environ.pop('MODELLAB_CLEANUP_CUDA', None)
+marker = object()
+assert ModelLabMemoryCleanup().cleanup(marker) == (marker,)
 job = SimpleNamespace(
     id='workflow-test',
     params=SimpleNamespace(

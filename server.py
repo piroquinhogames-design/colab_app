@@ -22,7 +22,7 @@ import threading
 import time
 import types
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -466,14 +466,12 @@ class MegaArchive:
             return False
         metadata_path = OUTPUTS / f"{job.id}.json"
         try:
-            # O estado só é confirmado depois que imagem e manifesto forem
-            # aceitos pelo cliente MEGA. O primeiro manifesto é provisório;
-            # o segundo registra a confirmação para restauração futura.
+            # O PNG é enviado primeiro; somente depois o manifesto confirma
+            # a sincronização. Isso mantém o retry local seguro e evita um
+            # terceiro upload do mesmo JSON.
             job.mega_synced = False
             if image_path and image_path.exists():
                 self._upload(image_path)
-            metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
-            self._upload(metadata_path)
             job.mega_synced = True
             metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
             self._upload(metadata_path)
@@ -817,12 +815,25 @@ class JobManager:
             if phase is not None:
                 job.progress_phase = phase
 
+    def _persist_job(self, job: Job, image: Path | None) -> None:
+        """Sincroniza o resultado fora do worker de geração e do polling do painel."""
+        # MegaArchive atualiza mega_synced enquanto monta o manifesto. Use uma
+        # cópia rasa para não expor esse estado intermediário ao frontend.
+        snapshot = replace(job)
+        synced = self.archive.save_job(snapshot, image)
+        with self.lock:
+            current = self.jobs.get(job.id)
+            if current:
+                current.mega_synced = synced
+                current.updated_at = now_iso()
+
     def _run(self) -> None:
         while True:
             job_id = self.pending.get()
             with self.lock:
                 job = self.jobs.get(job_id)
                 if not job:
+                    self.pending.task_done()
                     continue
                 job.status, job.updated_at = "running", now_iso()
                 job.progress_phase = "starting"
@@ -834,14 +845,16 @@ class JobManager:
                 with self.lock:
                     job.filename = image.name
                     job.status, job.progress, job.download_progress, job.pipeline_progress, job.progress_phase, job.completed_at, job.updated_at = "completed", 100, 100, 100, "completed", now_iso(), now_iso()
-                    job.mega_synced = self.archive.save_job(job, image)
+                    job.mega_synced = False
+                threading.Thread(target=self._persist_job, args=(job, image), name=f"mega-sync-{job.id[:8]}", daemon=True).start()
             except Exception as exc:
                 with self.lock:
                     error_text = str(exc)
                     if len(error_text) > 1_500:
                         error_text = error_text[:300] + "\n... [log truncado] ...\n" + error_text[-1_150:]
                     job.status, job.error, job.progress_phase, job.updated_at = "failed", error_text, "failed", now_iso()
-                    job.mega_synced = self.archive.save_job(job, None)
+                    job.mega_synced = False
+                threading.Thread(target=self._persist_job, args=(job, None), name=f"mega-sync-{job.id[:8]}", daemon=True).start()
             finally:
                 self.pending.task_done()
 
