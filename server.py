@@ -1274,14 +1274,43 @@ def catalog():
                 active_params = fallback_params
                 fallback_used = True
 
-        # O filtro de família/data é parcialmente local. Percorrer algumas
-        # páginas aqui evita que um primeiro lote com apenas um resultado
-        # compatível apareça como se fosse o catálogo inteiro.
+        # O filtro de família/data é parcialmente local. Para Anima, a API
+        # não oferece um baseModel confiável; por isso o primeiro lote bruto
+        # pode conter somente poucos resultados compatíveis. Continue lendo
+        # páginas até preencher a página visual solicitada.
         model_items = list(payload.get("items", []))
         next_cursor = (payload.get("metadata") or {}).get("nextCursor")
         seen_cursors = {str(next_cursor)} if next_cursor else set()
-        for _ in range(3):
-            if not next_cursor or len(model_items) >= requested_limit:
+        local_filtering = compatible_only or start_day is not None or end_day is not None
+
+        def visible_model_count(models: list[dict[str, Any]]) -> int:
+            count = 0
+            for candidate_model in models:
+                candidate_versions = [
+                    item for item in candidate_model.get("modelVersions", []) if isinstance(item, dict)
+                ]
+                if compatible_only:
+                    candidate_versions = [
+                        item for item in candidate_versions
+                        if version_matches_family(item, family, str(candidate_model.get("name") or ""))
+                    ]
+                if start_day is not None or end_day is not None:
+                    candidate_versions = [
+                        item for item in candidate_versions
+                        if _matches_date_range(item.get("publishedAt") or item.get("createdAt"), start_day, end_day)
+                    ]
+                if not candidate_versions and ("query" in params or "ids" in params) and not (start_day or end_day):
+                    candidate_versions = [
+                        item for item in candidate_model.get("modelVersions", []) if isinstance(item, dict)
+                    ]
+                if candidate_versions:
+                    count += 1
+            return count
+
+        max_pages = 8 if local_filtering else 3
+        for _ in range(max_pages):
+            enough_results = visible_model_count(model_items) >= requested_limit if local_filtering else len(model_items) >= requested_limit
+            if not next_cursor or enough_results:
                 break
             page_params = dict(active_params)
             page_params["cursor"] = next_cursor
@@ -1291,7 +1320,7 @@ def catalog():
             if not next_cursor or str(next_cursor) in seen_cursors:
                 break
             seen_cursors.add(str(next_cursor))
-        payload = {"items": model_items[:requested_limit], "metadata": {"nextCursor": next_cursor}}
+        payload = {"items": model_items, "metadata": {"nextCursor": next_cursor}}
     except requests.RequestException as exc:
         return jsonify({"error": f"Não foi possível consultar o catálogo Civitai: {str(exc)[:160]}"}), 502
     items = []
@@ -1333,6 +1362,9 @@ def catalog():
             "tags": model.get("tags", [])[:10], "version_id": version.get("id"), "version": version.get("name"),
             "versions": version_items, "image": image, "downloads": version.get("stats", {}).get("downloadCount", 0), "mature": bool(model.get("nsfw")),
         })
+    # O backend pode ter lido várias páginas para compensar o filtro local,
+    # mas a página visual continua limitada ao lote solicitado pelo cliente.
+    items = items[:requested_limit]
     return jsonify({
         "items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"),
         "family": family, "base_model": civitai_base_for_family(family),
