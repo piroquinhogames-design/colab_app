@@ -380,7 +380,7 @@ async function loadModelStore({append = false} = {}) {
   if (!button) return;
   button.disabled = true;
   const params = new URLSearchParams({
-    query: valueOf('#model-store-query').trim(), tag: valueOf('#model-store-tag').trim(), family: valueOf('#model-store-family', 'pony'),
+    query: valueOf('#model-store-query').trim(), tag: valueOf('#model-store-tag').trim(), family: valueOf('#model-store-family', 'anima'),
     sort: valueOf('#model-store-sort', 'Most Downloaded'), limit: '24', include_adult: checkedOf('#model-store-adult') ? 'true' : 'false',
   });
   if (append && state.modelStoreCursor) params.set('cursor', state.modelStoreCursor);
@@ -788,7 +788,7 @@ function restoreLastSettings(settings) {
 }
 
 function activeModel() {
-  return state.models.find((model) => model.id === $('#model')?.value) || state.models[0] || {family: 'pony'};
+  return state.models.find((model) => model.id === $('#model')?.value) || state.models[0] || {family: 'anima'};
 }
 
 function openModelSettings() {

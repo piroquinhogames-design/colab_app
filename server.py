@@ -1392,48 +1392,6 @@ def prompt_store():
         start_day, end_day = _request_date_range(request.args)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    try:
-        limit = min(max(int(request.args.get("limit", 24)), 1), 100)
-    except (TypeError, ValueError):
-        limit = 24
-    params: dict[str, Any] = {
-        "limit": limit,
-        "sort": "Newest" if sort == "Oldest" else sort,
-        "period": period,
-        "type": "image",
-        "withMeta": "true",
-        "nsfw": "true" if include_adult else "false",
-    }
-    username = request.args.get("username", "").strip()[:80]
-    if username:
-        params["username"] = username
-    if request.args.get("cursor"):
-        params["cursor"] = request.args["cursor"]
-    try:
-        def get_images(page_params: dict[str, Any]) -> dict[str, Any]:
-            response = requests.get(f"{CIVITAI_BASE}/images", params=page_params, headers=civitai_headers(), timeout=25)
-            response.raise_for_status()
-            return response.json()
-
-        active_params = dict(params)
-        payload = get_images(active_params)
-        image_items = list(payload.get("items", []))
-        next_cursor = (payload.get("metadata") or {}).get("nextCursor")
-        seen_cursors = {str(next_cursor)} if next_cursor else set()
-        for _ in range(3):
-            if not next_cursor or len(image_items) >= limit:
-                break
-            page_params = dict(active_params)
-            page_params["cursor"] = next_cursor
-            page = get_images(page_params)
-            image_items.extend(page.get("items", []))
-            next_cursor = (page.get("metadata") or {}).get("nextCursor")
-            if not next_cursor or str(next_cursor) in seen_cursors:
-                break
-            seen_cursors.add(str(next_cursor))
-        payload = {"items": image_items[:limit], "metadata": {"nextCursor": next_cursor}}
-    except (requests.RequestException, ValueError) as exc:
-        return jsonify({"error": f"Não foi possível consultar a Loja de Prompts no Civitai: {str(exc)[:160]}"}), 502
 
     family = request.args.get("family", "anima").strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
@@ -1442,99 +1400,204 @@ def prompt_store():
     search = request.args.get("query", "").strip().lower()[:120]
     tag_search = request.args.get("tag", "").strip().lower()[:80]
     filters = [term.strip().lower() for term in request.args.get("filters", "").split(",") if term.strip()][:8]
-    items: list[dict[str, Any]] = []
-    for image in payload.get("items", []):
-        meta = image.get("meta") or {}
-        prompt = str(meta.get("prompt") or meta.get("Prompt") or "").strip()
-        negative_prompt = str(meta.get("negativePrompt") or meta.get("Negative prompt") or "").strip()
-        resource_candidates: list[Any] = []
-        for resource_key in ("civitaiResources", "resources"):
-            candidate_resources = meta.get(resource_key) or []
-            if isinstance(candidate_resources, dict):
-                candidate_resources = [candidate_resources]
-            if isinstance(candidate_resources, list):
-                resource_candidates.extend(candidate_resources)
-        resources: list[dict[str, Any]] = []
-        seen_resource_keys: set[tuple[str, str, str]] = set()
-        for resource in resource_candidates:
-            if not isinstance(resource, dict):
-                continue
-            version_raw = resource.get("modelVersionId") or resource.get("versionId") or resource.get("model_version_id") or resource.get("version_id")
-            if version_raw:
-                resource_key = ("version", str(version_raw), str(resource.get("type", "")).lower())
-            else:
-                resource_key = ("raw", json.dumps(resource, sort_keys=True, default=str), "")
-            if resource_key in seen_resource_keys:
-                continue
-            seen_resource_keys.add(resource_key)
-            resources.append(resource)
-        loras: list[dict[str, Any]] = []
-        seen_lora_versions: set[int] = set()
-        for resource in resources:
-            if str(resource.get("type", "")).lower() != "lora":
-                continue
-            try:
-                version_id = int(resource.get("modelVersionId") or resource.get("versionId") or resource.get("model_version_id") or resource.get("version_id"))
-            except (TypeError, ValueError):
-                continue
-            if version_id <= 0 or version_id in seen_lora_versions:
-                continue
-            seen_lora_versions.add(version_id)
-            try:
-                model_id = int(resource.get("modelId") or resource.get("model_id")) if (resource.get("modelId") or resource.get("model_id")) else None
-            except (TypeError, ValueError):
-                model_id = None
-            raw_weight = resource.get("weight", resource.get("strength", 0.8))
-            try:
-                weight = float(raw_weight if raw_weight is not None else 0.8)
-            except (TypeError, ValueError):
-                weight = 0.8
-            if weight != weight:
-                weight = 0.8
-            weight = max(0.0, min(1.5, weight))
-            name = str(resource.get("modelName") or resource.get("modelVersionName") or resource.get("name") or f"LoRA // {version_id}").strip()[:120]
-            loras.append({
-                "version_id": version_id,
-                "model_id": model_id,
-                "name": name or f"LoRA // {version_id}",
-                "weight": weight,
-            })
-        tags = [str(tag) for tag in (image.get("tags") or [])]
-        resource_families = {
-            normalize_model_family(resource.get("baseModel") or resource.get("modelName") or resource.get("modelVersionName"))
-            for resource in resources if isinstance(resource, dict)
-        }
-        if compatible_only and resource_families and family not in resource_families:
-            continue
-        created_at = image.get("createdAt")
-        if not _matches_date_range(created_at, start_day, end_day):
-            continue
-        haystack = " ".join([prompt, negative_prompt, str(image.get("username", "")), " ".join(tags), family]).lower()
-        if search and search not in haystack:
-            continue
-        if tag_search and tag_search not in " ".join(tags).lower():
-            continue
-        if filters and not all(term in haystack for term in filters):
-            continue
-        items.append({
-            "id": image.get("id"), "image": image.get("url"), "prompt": prompt,
-            "negative_prompt": negative_prompt, "seed": meta.get("seed"),
-            "steps": meta.get("steps"), "guidance": meta.get("cfgScale") or meta.get("guidanceScale"),
-            "width": image.get("width") or (str(meta.get("Size", "")).split("x")[0] if "x" in str(meta.get("Size", "")) else None),
-            "height": image.get("height") or (str(meta.get("Size", "")).split("x")[-1] if "x" in str(meta.get("Size", "")) else None),
-            "username": image.get("username"), "created_at": image.get("createdAt"),
-            "nsfw": bool(image.get("nsfw")), "nsfw_level": image.get("nsfwLevel"),
-            "tags": tags[:12], "loras": loras[:MAX_LORAS],
-            "reactions": (image.get("stats") or {}).get("heartCount", 0),
-        })
+    try:
+        limit = min(max(int(request.args.get("limit", 24)), 1), 100)
+    except (TypeError, ValueError):
+        limit = 24
+
+    params: dict[str, Any] = {
+        "limit": limit,
+        "sort": sort,
+        "period": period,
+        "type": "image",
+        "withMeta": "true",
+        "nsfw": "true" if include_adult else "false",
+    }
+    if compatible_only:
+        params["baseModels"] = civitai_base_for_family(family)
+    username = request.args.get("username", "").strip()[:80]
+    if username:
+        params["username"] = username
+    if request.args.get("cursor"):
+        params["cursor"] = request.args["cursor"]
+
+    try:
+        def get_images(page_params: dict[str, Any]) -> dict[str, Any]:
+            response = requests.get(
+                f"{CIVITAI_BASE}/images",
+                params=page_params,
+                headers=civitai_headers(),
+                timeout=25,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return payload if isinstance(payload, dict) else {}
+
+        def prompt_item(image: dict[str, Any]) -> dict[str, Any] | None:
+            raw_meta = image.get("meta")
+            meta = raw_meta if isinstance(raw_meta, dict) else {}
+            prompt = str(meta.get("prompt") or meta.get("Prompt") or "").strip()
+            negative_prompt = str(meta.get("negativePrompt") or meta.get("Negative prompt") or "").strip()
+
+            resource_candidates: list[Any] = []
+            for resource_key in ("civitaiResources", "resources"):
+                candidate_resources = meta.get(resource_key) or []
+                if isinstance(candidate_resources, dict):
+                    candidate_resources = [candidate_resources]
+                if isinstance(candidate_resources, list):
+                    resource_candidates.extend(candidate_resources)
+            resources: list[dict[str, Any]] = []
+            seen_resource_keys: set[tuple[str, str, str]] = set()
+            for resource in resource_candidates:
+                if not isinstance(resource, dict):
+                    continue
+                version_raw = resource.get("modelVersionId") or resource.get("versionId") or resource.get("model_version_id") or resource.get("version_id")
+                if version_raw:
+                    resource_key = ("version", str(version_raw), str(resource.get("type", "")).lower())
+                else:
+                    resource_key = ("raw", json.dumps(resource, sort_keys=True, default=str), "")
+                if resource_key in seen_resource_keys:
+                    continue
+                seen_resource_keys.add(resource_key)
+                resources.append(resource)
+
+            loras: list[dict[str, Any]] = []
+            seen_lora_versions: set[int] = set()
+            for resource in resources:
+                if str(resource.get("type", "")).lower() != "lora":
+                    continue
+                try:
+                    version_id = int(resource.get("modelVersionId") or resource.get("versionId") or resource.get("model_version_id") or resource.get("version_id"))
+                except (TypeError, ValueError):
+                    continue
+                if version_id <= 0 or version_id in seen_lora_versions:
+                    continue
+                seen_lora_versions.add(version_id)
+                try:
+                    model_id = int(resource.get("modelId") or resource.get("model_id")) if (resource.get("modelId") or resource.get("model_id")) else None
+                except (TypeError, ValueError):
+                    model_id = None
+                raw_weight = resource.get("weight", resource.get("strength", 0.8))
+                try:
+                    weight = float(raw_weight if raw_weight is not None else 0.8)
+                except (TypeError, ValueError):
+                    weight = 0.8
+                if weight != weight:
+                    weight = 0.8
+                weight = max(0.0, min(1.5, weight))
+                name = str(resource.get("modelName") or resource.get("modelVersionName") or resource.get("name") or f"LoRA // {version_id}").strip()[:120]
+                loras.append({
+                    "version_id": version_id,
+                    "model_id": model_id,
+                    "name": name or f"LoRA // {version_id}",
+                    "weight": weight,
+                })
+
+            raw_tags = image.get("tags") or []
+            tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
+            family_hints = [
+                image.get("baseModel"),
+                meta.get("Model type"),
+                meta.get("modelType"),
+                meta.get("baseModel"),
+            ]
+            family_hints.extend(
+                resource.get(key)
+                for resource in resources
+                for key in ("baseModel", "modelName", "modelVersionName")
+            )
+            resource_families = {
+                normalize_model_family(str(hint))
+                for hint in family_hints
+                if hint is not None and str(hint).strip()
+            }
+            if compatible_only and resource_families and family not in resource_families:
+                return None
+
+            created_at = image.get("createdAt")
+            if not _matches_date_range(created_at, start_day, end_day):
+                return None
+            resource_text = " ".join(
+                str(resource.get(key) or "")
+                for resource in resources
+                for key in ("modelName", "modelVersionName", "baseModel")
+            )
+            haystack = " ".join([
+                prompt,
+                negative_prompt,
+                str(image.get("username", "")),
+                " ".join(tags),
+                str(image.get("baseModel", "")),
+                resource_text,
+            ]).lower()
+            if search and search not in haystack:
+                return None
+            if tag_search and tag_search not in " ".join(tags).lower():
+                return None
+            if filters and not all(term in haystack for term in filters):
+                return None
+
+            size = str(meta.get("Size", ""))
+            size_parts = re.split(r"[xX×]", size, maxsplit=1)
+            width = image.get("width") or (size_parts[0] if len(size_parts) == 2 else None)
+            height = image.get("height") or (size_parts[1] if len(size_parts) == 2 else None)
+            stats = image.get("stats") if isinstance(image.get("stats"), dict) else {}
+            return {
+                "id": image.get("id"), "image": image.get("url"), "prompt": prompt,
+                "negative_prompt": negative_prompt, "seed": meta.get("seed"),
+                "steps": meta.get("steps"), "guidance": meta.get("cfgScale") or meta.get("guidanceScale"),
+                "width": width, "height": height,
+                "username": image.get("username"), "created_at": created_at,
+                "nsfw": bool(image.get("nsfw")), "nsfw_level": image.get("nsfwLevel"),
+                "tags": tags[:12], "loras": loras[:MAX_LORAS],
+                "reactions": stats.get("heartCount", 0) or 0,
+            }
+
+        active_params = dict(params)
+        next_cursor = None
+        matched_items: list[dict[str, Any]] = []
+        seen_cursors: set[str] = set()
+        seen_images: set[str] = set()
+        local_filtering = compatible_only or start_day is not None or end_day is not None or bool(search or tag_search or filters)
+        max_pages = 8 if local_filtering else 1
+        for page_number in range(max_pages):
+            page = get_images(active_params)
+            raw_items = page.get("items") or []
+            if not isinstance(raw_items, list):
+                raw_items = []
+            for image in raw_items:
+                if not isinstance(image, dict):
+                    continue
+                image_key = str(image.get("id") or image.get("url") or json.dumps(image, sort_keys=True, default=str))
+                if image_key in seen_images:
+                    continue
+                seen_images.add(image_key)
+                item = prompt_item(image)
+                if item is not None:
+                    matched_items.append(item)
+            next_cursor = (page.get("metadata") or {}).get("nextCursor")
+            if not next_cursor or len(matched_items) >= limit or page_number + 1 >= max_pages:
+                break
+            next_cursor_key = str(next_cursor)
+            if next_cursor_key in seen_cursors:
+                break
+            seen_cursors.add(next_cursor_key)
+            active_params = dict(params)
+            active_params["cursor"] = next_cursor
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        return jsonify({"error": f"Não foi possível consultar a Loja de Prompts no Civitai: {str(exc)[:160]}"}), 502
+
+    items = matched_items[:limit]
     if sort == "Random":
         random.shuffle(items)
     elif sort == "Oldest":
         items.sort(key=lambda item: _published_day(item.get("created_at")) or datetime.min.date())
-    else:
+    elif sort == "Newest":
         items.sort(key=lambda item: _published_day(item.get("created_at")) or datetime.min.date(), reverse=True)
+    else:
+        items.sort(key=lambda item: item.get("reactions", 0) or 0, reverse=True)
     return jsonify({
-        "items": items, "next_cursor": (payload.get("metadata") or {}).get("nextCursor"),
+        "items": items, "next_cursor": next_cursor,
         "family": family, "base_model": civitai_base_for_family(family),
         "includes_adult": include_adult,
         "catalog_query": {"sort": sort, "period": period, "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip()), "randomized": sort == "Random"},
