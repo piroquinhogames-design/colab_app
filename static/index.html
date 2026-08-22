@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=20260822-3" />
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
@@ -106,10 +106,6 @@
           <div class="telemetry-status"><div class="pulse-core"></div><p id="telemetry-title">EM ESPERA</p><span id="telemetry-subtitle">Sem job ativo no buffer.</span></div>
           <div class="progress-caption"><span>PROGRESSO DA GERAÇÃO</span><strong id="progress-number">0%</strong></div>
           <div class="progress-rail"><div id="progress-bar"></div></div>
-          <div class="stage-progress-list" aria-live="polite">
-            <div class="stage-progress" data-stage="download"><div class="stage-progress-head"><span>DOWNLOAD DO MODELO</span><strong id="download-progress-number">0%</strong></div><div class="progress-rail compact"><div id="download-progress-bar"></div></div></div>
-            <div class="stage-progress" data-stage="pipeline"><div class="stage-progress-head"><span>CARREGAMENTO DA PIPELINE</span><strong id="pipeline-progress-number">0%</strong></div><div class="progress-rail compact"><div id="pipeline-progress-bar"></div></div></div>
-          </div>
           <dl class="technical-readout"><div><dt>ENGINE</dt><dd id="engine-readout">MODEL PROFILE</dd></div><div><dt>QUEUE</dt><dd id="queue-readout">0 JOBS</dd></div><div><dt>ARCHIVE</dt><dd id="archive-readout">CHECANDO</dd></div><div><dt>NODE</dt><dd>T4 / CUDA</dd></div></dl>
           <div class="telemetry-log" id="telemetry-log"><p><span>00:00:00</span> Aguardando conexão com o núcleo.</p></div>
           <div class="signal-diagram" aria-hidden="true"><span></span><i></i><span></span><i></i><span></span></div>
@@ -139,7 +135,7 @@
 
     <dialog id="catalog-dialog" class="catalog-dialog">
       <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / <span id="catalog-family-label">PONY</span> ECOSYSTEM ]</p><h2>LOJA DE ADAPTADORES</h2><p class="store-lead">A loja acompanha a família do checkpoint ativo e prioriza LoRAs com base compatível.</p></div><button id="close-catalog" type="button" class="close-button" aria-label="Fechar catálogo">×</button></div>
-      <div class="catalog-filters"><input id="catalog-query" type="search" placeholder="BUSCAR NOME OU ESTILO" /><input id="catalog-tag" type="text" placeholder="TAG OPCIONAL" /><select id="catalog-sort"><option value="Most Downloaded">MAIS BAIXADOS</option><option value="Highest Rated">MELHOR AVALIADOS</option><option value="Newest">MAIS NOVOS</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="catalog-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="search-catalog" class="signal-button small" type="button">CONSULTAR</button></div>
+      <div class="catalog-filters"><input id="catalog-query" type="search" placeholder="BUSCAR NOME OU ESTILO" /><input id="catalog-tag" type="text" placeholder="TAG OPCIONAL" /><select id="catalog-sort" aria-label="Ordenar LoRAs"><option value="Most Downloaded">MAIS BAIXADOS</option><option value="Highest Rated">MELHOR AVALIADOS</option><option value="Newest">MAIS NOVOS</option></select><select id="catalog-period" aria-label="Período de métricas"><option value="AllTime">TODO O PERÍODO</option><option value="Year">ÚLTIMO ANO</option><option value="Month">ÚLTIMO MÊS</option><option value="Week">ÚLTIMA SEMANA</option><option value="Day">ÚLTIMO DIA</option></select><select id="catalog-base-filter" aria-label="Filtro de base"><option value="compatible">BASE COMPATÍVEL</option><option value="all">TODAS AS BASES</option></select><label class="date-filter"><span>LANÇADO DESDE</span><input id="catalog-date-from" type="date" /></label><label class="date-filter"><span>LANÇADO ATÉ</span><input id="catalog-date-to" type="date" /></label><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="catalog-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="search-catalog" class="signal-button small" type="button">CONSULTAR</button></div>
       <div id="catalog-grid" class="catalog-grid"><p class="catalog-empty">Abra o catálogo para localizar LoRAs compatíveis.</p></div>
       <div class="catalog-footer"><span id="catalog-note">A loja inicia em Pony e acompanha o checkpoint ativo.</span><button id="next-catalog" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
     </dialog>
@@ -147,8 +143,8 @@
     <dialog id="prompt-store-dialog" class="prompt-store-dialog">
       <div class="dialog-top"><div><p class="eyebrow">[ CIVITAI / <span id="prompt-family-label">PONY</span> PROMPT MARKET ]</p><h2>LOJA DE PROMPTS</h2><p class="store-lead">Descubra imagens com metadados disponíveis e remixe prompt, seed, LoRAs e composição em uma segunda versão.</p></div><button id="close-prompt-store" type="button" class="close-button" aria-label="Fechar Loja de Prompts">×</button></div>
       <div class="prompt-store-filters">
-        <div class="prompt-store-search"><input id="prompt-store-query" type="search" placeholder="BUSCAR PROMPT, ESTILO OU AUTOR" /><button id="search-prompt-store" class="signal-button small" type="button">CONSULTAR</button></div>
-        <div class="prompt-store-options"><select id="prompt-store-sort" aria-label="Ordenar Loja de Prompts"><option value="Most Reactions">RELEVÂNCIA</option><option value="Random">ALEATÓRIO</option><option value="Newest">MAIS RECENTES</option></select><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="prompt-store-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="random-prompt-store" class="subtle-button" type="button">↝ SORTEAR</button></div>
+        <div class="prompt-store-search"><input id="prompt-store-query" type="search" placeholder="BUSCAR PROMPT, ESTILO OU AUTOR" /><input id="prompt-store-tag" type="text" placeholder="TAG OU TERMO" /><input id="prompt-store-username" type="text" placeholder="AUTOR / USUÁRIO" /><button id="search-prompt-store" class="signal-button small" type="button">CONSULTAR</button></div>
+        <div class="prompt-store-options"><select id="prompt-store-sort" aria-label="Ordenar Loja de Prompts"><option value="Most Reactions">RELEVÂNCIA</option><option value="Random">ALEATÓRIO</option><option value="Newest">MAIS RECENTES</option><option value="Oldest">MAIS ANTIGOS</option></select><select id="prompt-store-period" aria-label="Período dos prompts"><option value="AllTime">TODO O PERÍODO</option><option value="Year">ÚLTIMO ANO</option><option value="Month">ÚLTIMO MÊS</option><option value="Week">ÚLTIMA SEMANA</option><option value="Day">ÚLTIMO DIA</option></select><select id="prompt-store-base-filter" aria-label="Filtro de base dos prompts"><option value="compatible">BASE COMPATÍVEL</option><option value="all">TODAS AS BASES</option></select><label class="date-filter"><span>CRIADO DESDE</span><input id="prompt-store-date-from" type="date" /></label><label class="date-filter"><span>CRIADO ATÉ</span><input id="prompt-store-date-to" type="date" /></label><label class="adult-filter" title="Inclui conteúdo adulto conforme as permissões da sua conta Civitai"><input id="prompt-store-adult" type="checkbox" /><span>INCLUIR +18</span><small>CONTA CIVITAI</small></label><button id="random-prompt-store" class="subtle-button" type="button">↝ SORTEAR</button></div>
         <div class="prompt-filter-bank" role="group" aria-label="Filtros combináveis">
           <span>FILTRAR POR</span><button type="button" class="prompt-filter-chip" data-prompt-filter="pose">POSES</button><button type="button" class="prompt-filter-chip" data-prompt-filter="portrait">RETRATO</button><button type="button" class="prompt-filter-chip" data-prompt-filter="cinematic">CINEMÁTICO</button><button type="button" class="prompt-filter-chip" data-prompt-filter="anime">ANIME</button><button type="button" class="prompt-filter-chip" data-prompt-filter="fashion">MODA</button><button type="button" class="prompt-filter-chip" data-prompt-filter="landscape">PAISAGEM</button>
         </div>
@@ -162,6 +158,6 @@
       <div class="image-dialog-body"><img id="image-dialog-preview" alt="Pré-visualização ampliada" /><div class="image-dialog-info"><p id="image-dialog-prompt"></p><div id="image-dialog-meta"></div><button id="image-dialog-remix" class="signal-button" type="button">⟳ REMIXAR ESTA IMAGEM</button></div></div>
     </dialog>
     <div id="toast" class="toast" role="status"></div>
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=20260822-3"></script>
   </body>
 </html>

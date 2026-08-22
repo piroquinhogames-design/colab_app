@@ -156,6 +156,47 @@ def version_matches_family(version: dict[str, Any], family: str | None, model_na
     return expected in actual or actual in expected
 
 
+def _filter_day(value: str | None) -> Any:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value).strip()[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _published_day(value: Any) -> Any:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _matches_date_range(value: Any, start_day: Any, end_day: Any) -> bool:
+    if start_day is None and end_day is None:
+        return True
+    day = _published_day(value)
+    if day is None:
+        return False
+    return (start_day is None or day >= start_day) and (end_day is None or day <= end_day)
+
+
+def _request_date_range(args: Any) -> tuple[Any, Any]:
+    start_raw = args.get("date_from", "").strip()
+    end_raw = args.get("date_to", "").strip()
+    start_day = _filter_day(start_raw)
+    end_day = _filter_day(end_raw)
+    if start_raw and start_day is None:
+        raise ValueError("A data inicial deve estar no formato AAAA-MM-DD.")
+    if end_raw and end_day is None:
+        raise ValueError("A data final deve estar no formato AAAA-MM-DD.")
+    if start_day and end_day and start_day > end_day:
+        raise ValueError("A data inicial não pode ser posterior à data final.")
+    return start_day, end_day
+
+
 def _load_model_specs() -> dict[str, dict[str, Any]]:
     """Carrega checkpoints com perfil de família e defaults adaptativos."""
     default_family = os.environ.get("MODEL_FAMILY", "anima").strip().lower()
@@ -268,6 +309,20 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
 )
+
+
+@app.after_request
+def prevent_stale_app_assets(response):
+    """Keep the HTML shell and executable assets in sync after a Colab restart."""
+    path = request.path or ""
+    cache_sensitive = path == "/" or path in {
+        "/static/index.html", "/static/login.html", "/static/app.js", "/static/settings.js", "/static/style.css",
+    }
+    if cache_sensitive:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 def now_iso() -> str:
@@ -500,18 +555,29 @@ class MegaArchive:
             self.error = f"Falha ao salvar preferências no MEGA: {str(exc)[:180]}"
             return False
 
-    def load_last_settings(self) -> dict[str, Any] | None:
-        """Recupera o manifesto único de preferências sem misturá-lo ao histórico de jobs."""
-        if not self.available or not self.client:
-            return None
+    def load_last_settings(self, *, allow_remote: bool = True) -> dict[str, Any] | None:
+        """Retorna primeiro o cache local e acessa o MEGA somente quando permitido."""
         cache = ROOT / "mega-cache"
         cache.mkdir(exist_ok=True)
+        local = OUTPUTS / LAST_SETTINGS_NAME
+        cached_remote = cache / LAST_SETTINGS_NAME
+        for candidate in (local, cached_remote):
+            try:
+                if candidate.exists():
+                    payload = json.loads(candidate.read_text(encoding="utf-8"))
+                    settings = payload.get("settings") if isinstance(payload, dict) else None
+                    if isinstance(settings, dict):
+                        return settings
+            except (OSError, json.JSONDecodeError):
+                continue
+        if not allow_remote or not self.available or not self.client:
+            return None
         try:
             node = self._download_node(self.client.find(LAST_SETTINGS_NAME))
             if not node:
                 return None
             downloaded = self.client.download(node, str(cache))
-            local = Path(downloaded) if downloaded else cache / LAST_SETTINGS_NAME
+            local = Path(downloaded) if downloaded else cached_remote
             if not local.exists():
                 return None
             payload = json.loads(local.read_text(encoding="utf-8"))
@@ -910,6 +976,7 @@ def initialize_archive() -> None:
     try:
         archive.connect()
         restore_archive()
+        archive.load_last_settings()
     finally:
         archive_ready.set()
 
@@ -982,9 +1049,12 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
 
 @app.route("/")
 def index():
-    if not session.get("authenticated"):
-        return send_file(Path(app.static_folder) / "login.html")
-    return send_file(Path(app.static_folder) / "index.html")
+    page = "index.html" if session.get("authenticated") else "login.html"
+    response = send_file(Path(app.static_folder) / page)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/api/login", methods=["POST"])
@@ -1010,10 +1080,9 @@ def logout():
 @app.route("/api/bootstrap")
 @authentication_required
 def bootstrap():
-    # Restaura manifestos também quando a sessão MEGA já está autenticada.
-    if archive_ready.is_set():
-        restore_archive()
-    last_settings = archive.load_last_settings()
+    # Jobs e preferências já são restaurados pelo inicializador em segundo plano.
+    # O helper usa cache local primeiro, portanto a recarga nunca espera pelo MEGA.
+    last_settings = archive.load_last_settings(allow_remote=archive_ready.is_set())
     return jsonify({
         "csrf": session.get("csrf"), "jobs": manager.public_jobs(),
         "archive": {
@@ -1145,16 +1214,31 @@ def catalog():
     family = request.args.get("family", "anima").strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
         family = "anima"
+    try:
+        start_day, end_day = _request_date_range(request.args)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    sort = request.args.get("sort", "Most Downloaded")
+    if sort not in {"Most Downloaded", "Highest Rated", "Newest", "Oldest"}:
+        sort = "Most Downloaded"
+    period = request.args.get("period", "AllTime")
+    if period not in {"AllTime", "Year", "Month", "Week", "Day"}:
+        period = "AllTime"
+    base_filter = request.args.get("base_filter", "compatible").strip().lower()
+    compatible_only = base_filter not in {"0", "false", "no", "all"}
+    try:
+        requested_limit = int(request.args.get("limit", 48))
+    except (TypeError, ValueError):
+        requested_limit = 48
     params: dict[str, Any] = {
-        "limit": min(max(int(request.args.get("limit", 24)), 1), 48), "types": "LORA",
-        "sort": request.args.get("sort", "Most Downloaded"),
-        "period": request.args.get("period", "AllTime"), "primaryFileOnly": "true",
+        "limit": min(max(requested_limit, 1), 100), "types": "LORA",
+        "sort": sort, "period": period, "primaryFileOnly": "true",
         "nsfw": "true" if include_adult else "false",
     }
     # "Anima" não é garantidamente um valor do enum BaseModel em todas as
     # versões da API. Para não transformar uma base nova em resposta vazia,
     # buscamos todos os LoRAs e filtramos a compatibilidade localmente.
-    if family != "anima":
+    if compatible_only and family != "anima":
         params["baseModels"] = civitai_base_for_family(family)
     if request.args.get("cursor"):
         params["cursor"] = request.args["cursor"]
@@ -1171,36 +1255,68 @@ def catalog():
 
     fallback_used = False
     try:
-        response = requests.get(f"{CIVITAI_BASE}/models", params=params, headers=civitai_headers(), timeout=25)
-        response.raise_for_status()
-        payload = response.json()
+        def get_models(page_params: dict[str, Any]) -> dict[str, Any]:
+            response = requests.get(f"{CIVITAI_BASE}/models", params=page_params, headers=civitai_headers(), timeout=25)
+            response.raise_for_status()
+            return response.json()
 
+        active_params = dict(params)
+        payload = get_models(active_params)
         # Se uma busca textual (sem ID) retornar vazia e não for paginação,
         # tenta relaxar o filtro de família, pois o criador pode ter marcado a
         # base de forma genérica no Civitai.
         if not payload.get("items") and "query" in params and not params.get("cursor"):
             fallback_params = dict(params)
             fallback_params.pop("baseModels", None)
-            fallback_response = requests.get(f"{CIVITAI_BASE}/models", params=fallback_params, headers=civitai_headers(), timeout=25)
-            fallback_response.raise_for_status()
-            fallback_payload = fallback_response.json()
+            fallback_payload = get_models(fallback_params)
             if fallback_payload.get("items"):
                 payload = fallback_payload
+                active_params = fallback_params
                 fallback_used = True
+
+        # O filtro de família/data é parcialmente local. Percorrer algumas
+        # páginas aqui evita que um primeiro lote com apenas um resultado
+        # compatível apareça como se fosse o catálogo inteiro.
+        model_items = list(payload.get("items", []))
+        next_cursor = (payload.get("metadata") or {}).get("nextCursor")
+        seen_cursors = {str(next_cursor)} if next_cursor else set()
+        for _ in range(3):
+            if not next_cursor or len(model_items) >= requested_limit:
+                break
+            page_params = dict(active_params)
+            page_params["cursor"] = next_cursor
+            page = get_models(page_params)
+            model_items.extend(page.get("items", []))
+            next_cursor = (page.get("metadata") or {}).get("nextCursor")
+            if not next_cursor or str(next_cursor) in seen_cursors:
+                break
+            seen_cursors.add(str(next_cursor))
+        payload = {"items": model_items[:requested_limit], "metadata": {"nextCursor": next_cursor}}
     except requests.RequestException as exc:
         return jsonify({"error": f"Não foi possível consultar o catálogo Civitai: {str(exc)[:160]}"}), 502
     items = []
     for model in payload.get("items", []):
         all_versions = [item for item in model.get("modelVersions", []) if isinstance(item, dict)]
-        versions = [item for item in all_versions if version_matches_family(item, family, str(model.get("name") or ""))]
+        versions = all_versions if not compatible_only else [
+            item for item in all_versions if version_matches_family(item, family, str(model.get("name") or ""))
+        ]
+        if start_day is not None or end_day is not None:
+            versions = [
+                item for item in versions
+                if _matches_date_range(item.get("publishedAt") or item.get("createdAt"), start_day, end_day)
+            ]
         # Uma busca textual/por ID deve priorizar o resultado oficial solicitado.
         # Se a API não trouxe baseModel ou usou um rótulo novo, não escondemos o
         # modelo: exibimos as versões publicadas e sinalizamos a busca ampliada.
-        if not versions and ("query" in params or "ids" in params) and all_versions:
+        if not versions and ("query" in params or "ids" in params) and all_versions and not (start_day or end_day):
             versions = all_versions
             fallback_used = True
         if not versions:
             continue
+        if sort == "Oldest":
+            versions = sorted(versions, key=lambda item: _published_day(item.get("publishedAt") or item.get("createdAt")) or datetime.min.date())
+        else:
+            versions = sorted(versions, key=lambda item: _published_day(item.get("publishedAt") or item.get("createdAt")) or datetime.min.date(), reverse=True)
         version = versions[0]
         image = next((item.get("url") for item in version.get("images", []) if item.get("url")), None)
         version_items = []
@@ -1220,8 +1336,11 @@ def catalog():
     return jsonify({
         "items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"),
         "family": family, "base_model": civitai_base_for_family(family),
-        "includes_adult": include_adult, "catalog_query": {"nsfw": params["nsfw"], "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
+        "includes_adult": include_adult,
+        "catalog_query": {"nsfw": params["nsfw"], "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
         "fallback_used": fallback_used,
+        "compatible_only": compatible_only,
+        "date_from": request.args.get("date_from", ""), "date_to": request.args.get("date_to", ""),
     })
 
 
@@ -1232,33 +1351,64 @@ def prompt_store():
     if include_adult and not os.environ.get("CIVITAI_TOKEN", "").strip():
         return jsonify({"error": "Defina CIVITAI_TOKEN no servidor para consultar conteúdo adulto autorizado."}), 400
     sort = request.args.get("sort", "Most Reactions")
-    if sort not in {"Most Reactions", "Random", "Newest"}:
+    if sort not in {"Most Reactions", "Random", "Newest", "Oldest"}:
         sort = "Most Reactions"
+    period = request.args.get("period", "AllTime")
+    if period not in {"AllTime", "Year", "Month", "Week", "Day"}:
+        period = "AllTime"
     try:
-        limit = min(max(int(request.args.get("limit", 24)), 1), 48)
+        start_day, end_day = _request_date_range(request.args)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        limit = min(max(int(request.args.get("limit", 24)), 1), 100)
     except (TypeError, ValueError):
         limit = 24
     params: dict[str, Any] = {
         "limit": limit,
-        "sort": sort,
-        "period": request.args.get("period", "AllTime"),
+        "sort": "Newest" if sort == "Oldest" else sort,
+        "period": period,
         "type": "image",
         "withMeta": "true",
         "nsfw": "true" if include_adult else "false",
     }
+    username = request.args.get("username", "").strip()[:80]
+    if username:
+        params["username"] = username
     if request.args.get("cursor"):
         params["cursor"] = request.args["cursor"]
     try:
-        response = requests.get(f"{CIVITAI_BASE}/images", params=params, headers=civitai_headers(), timeout=25)
-        response.raise_for_status()
-        payload = response.json()
+        def get_images(page_params: dict[str, Any]) -> dict[str, Any]:
+            response = requests.get(f"{CIVITAI_BASE}/images", params=page_params, headers=civitai_headers(), timeout=25)
+            response.raise_for_status()
+            return response.json()
+
+        active_params = dict(params)
+        payload = get_images(active_params)
+        image_items = list(payload.get("items", []))
+        next_cursor = (payload.get("metadata") or {}).get("nextCursor")
+        seen_cursors = {str(next_cursor)} if next_cursor else set()
+        for _ in range(3):
+            if not next_cursor or len(image_items) >= limit:
+                break
+            page_params = dict(active_params)
+            page_params["cursor"] = next_cursor
+            page = get_images(page_params)
+            image_items.extend(page.get("items", []))
+            next_cursor = (page.get("metadata") or {}).get("nextCursor")
+            if not next_cursor or str(next_cursor) in seen_cursors:
+                break
+            seen_cursors.add(str(next_cursor))
+        payload = {"items": image_items[:limit], "metadata": {"nextCursor": next_cursor}}
     except (requests.RequestException, ValueError) as exc:
         return jsonify({"error": f"Não foi possível consultar a Loja de Prompts no Civitai: {str(exc)[:160]}"}), 502
 
     family = request.args.get("family", "anima").strip().lower()
     if family not in SUPPORTED_MODEL_FAMILIES:
         family = "anima"
+    compatible_only = request.args.get("base_filter", "compatible").strip().lower() not in {"0", "false", "no", "all"}
     search = request.args.get("query", "").strip().lower()[:120]
+    tag_search = request.args.get("tag", "").strip().lower()[:80]
     filters = [term.strip().lower() for term in request.args.get("filters", "").split(",") if term.strip()][:8]
     items: list[dict[str, Any]] = []
     for image in payload.get("items", []):
@@ -1285,10 +1435,15 @@ def prompt_store():
             normalize_model_family(resource.get("baseModel") or resource.get("modelName") or resource.get("modelVersionName"))
             for resource in resources if isinstance(resource, dict)
         }
-        if resource_families and family not in resource_families:
+        if compatible_only and resource_families and family not in resource_families:
+            continue
+        created_at = image.get("createdAt")
+        if not _matches_date_range(created_at, start_day, end_day):
             continue
         haystack = " ".join([prompt, negative_prompt, str(image.get("username", "")), " ".join(tags), family]).lower()
         if search and search not in haystack:
+            continue
+        if tag_search and tag_search not in " ".join(tags).lower():
             continue
         if filters and not all(term in haystack for term in filters):
             continue
@@ -1305,10 +1460,16 @@ def prompt_store():
         })
     if sort == "Random":
         random.shuffle(items)
+    elif sort == "Oldest":
+        items.sort(key=lambda item: _published_day(item.get("created_at")) or datetime.min.date())
+    else:
+        items.sort(key=lambda item: _published_day(item.get("created_at")) or datetime.min.date(), reverse=True)
     return jsonify({
         "items": items, "next_cursor": (payload.get("metadata") or {}).get("nextCursor"),
         "family": family, "base_model": civitai_base_for_family(family),
-        "includes_adult": include_adult, "catalog_query": {"sort": sort, "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip()), "randomized": sort == "Random"},
+        "includes_adult": include_adult,
+        "catalog_query": {"sort": sort, "period": period, "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip()), "randomized": sort == "Random"},
+        "compatible_only": compatible_only, "date_from": request.args.get("date_from", ""), "date_to": request.args.get("date_to", ""),
     })
 
 

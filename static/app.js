@@ -1,4 +1,4 @@
-import { restoreLastSettings as applyLastSettings } from '/static/settings.js';
+import { restoreLastSettings as applyLastSettings } from '/static/settings.js?v=20260822-3';
 
 const state = {
   csrf: null,
@@ -24,6 +24,13 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const valueOf = (selector, fallback = '') => $(selector)?.value ?? fallback;
+const checkedOf = (selector) => Boolean($(selector)?.checked);
+const on = (selector, event, handler) => {
+  const element = $(selector);
+  if (element) element.addEventListener(event, handler);
+  return element;
+};
 
 const EDIT_LEVELS = {
   low: {label: 'BAIXO', strength: 0.25},
@@ -56,12 +63,14 @@ function log(message) {
   const line = document.createElement('p');
   line.innerHTML = `<span>${timestamp()}</span> ${escapeHtml(message)}`;
   const target = $('#telemetry-log');
+  if (!target) return;
   target.prepend(line);
   while (target.children.length > 8) target.lastElementChild.remove();
 }
 
 function toast(message, isError = false) {
   const target = $('#toast');
+  if (!target) return;
   target.textContent = message;
   target.classList.toggle('error', isError);
   target.classList.add('show');
@@ -91,8 +100,10 @@ function formatDate(value) {
 
 function setNode(online) {
   const node = $('#node-status');
+  if (!node) return;
   node.classList.toggle('offline', !online);
-  node.querySelector('span').textContent = online ? 'NODE // ONLINE' : 'NODE // OFFLINE';
+  const label = node.querySelector('span');
+  if (label) label.textContent = online ? 'NODE // ONLINE' : 'NODE // OFFLINE';
 }
 
 function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}) {
@@ -145,9 +156,9 @@ function renderModels(models, selectedId = '') {
 function setMode(mode, {silent = false} = {}) {
   state.mode = mode;
   $$('.mode').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
-  $('#upload-zone').classList.toggle('hidden', mode !== 'img2img');
-  $('#edit-control').classList.toggle('hidden', mode !== 'img2img');
-  $('.strength-control').classList.toggle('hidden', mode !== 'img2img');
+  $('#upload-zone')?.classList.toggle('hidden', mode !== 'img2img');
+  $('#edit-control')?.classList.toggle('hidden', mode !== 'img2img');
+  $('.strength-control')?.classList.toggle('hidden', mode !== 'img2img');
   if (!silent) log(mode === 'img2img' ? 'Modo IMG→IMG selecionado; injete a imagem-base.' : 'Modo TXT→IMG selecionado.');
 }
 
@@ -168,12 +179,16 @@ function setEditLevel(level, {silent = false} = {}) {
 
 function wireParameterReadouts() {
   [['steps', 'steps-value'], ['guidance', 'guidance-value'], ['strength', 'strength-value']].forEach(([input, output]) => {
-    $(`#${input}`).addEventListener('input', (event) => { $(`#${output}`).value = event.target.value; });
+    on(`#${input}`, 'input', (event) => {
+      const target = $(`#${output}`);
+      if (target) target.value = event.target.value;
+    });
   });
 }
 
 function appendTag(targetId, tag) {
   const field = $(`#${targetId}`);
+  if (!field) return;
   field.value = field.value.trim() ? `${field.value.trim()}, ${tag}` : tag;
   field.focus();
 }
@@ -245,6 +260,7 @@ function renderCatalog(items) {
       <h3>${escapeHtml(item.name || 'LoRA sem nome')}</h3>
       <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
       <small class="catalog-base-label">BASE: ${escapeHtml(selected.base_model || 'não informada')}</small>
+      <small class="catalog-date-label">LANÇADA: ${escapeHtml(formatDate(selected.created_at || selected.updated_at))}</small>
       <label class="version-picker">VERSÃO
         <select data-version-select="${escapeHtml(item.id)}" aria-label="Versão de ${escapeHtml(item.name || 'LoRA')}">${versionOptions}</select>
       </label>
@@ -308,10 +324,11 @@ async function useModelFromStore(item) {
 
 async function loadModelStore({append = false} = {}) {
   const button = $('#search-model-store');
+  if (!button) return;
   button.disabled = true;
   const params = new URLSearchParams({
-    query: $('#model-store-query').value.trim(), tag: $('#model-store-tag').value.trim(), family: $('#model-store-family').value,
-    sort: $('#model-store-sort').value, limit: '24', include_adult: $('#model-store-adult').checked ? 'true' : 'false',
+    query: valueOf('#model-store-query').trim(), tag: valueOf('#model-store-tag').trim(), family: valueOf('#model-store-family', 'pony'),
+    sort: valueOf('#model-store-sort', 'Most Downloaded'), limit: '24', include_adult: checkedOf('#model-store-adult') ? 'true' : 'false',
   });
   if (append && state.modelStoreCursor) params.set('cursor', state.modelStoreCursor);
   try {
@@ -319,18 +336,23 @@ async function loadModelStore({append = false} = {}) {
     state.modelStoreCursor = payload.next_cursor || null;
     state.modelStoreItems = append ? [...state.modelStoreItems, ...(payload.items || [])] : (payload.items || []);
     renderModelStore(state.modelStoreItems);
-    $('#next-model-store').disabled = !state.modelStoreCursor;
-    $('#model-store-note').textContent = `${(payload.items || []).length} checkpoints encontrados // base ${payload.base_model || 'todas'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'}`;
+    const next = $('#next-model-store');
+    if (next) next.disabled = !state.modelStoreCursor;
+    const note = $('#model-store-note');
+    if (note) note.textContent = `${(payload.items || []).length} checkpoints encontrados // base ${payload.base_model || 'todas'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'}`;
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
 }
 
 async function loadCatalog({append = false} = {}) {
   const button = $('#search-catalog');
+  if (!button) return;
   button.disabled = true;
   const params = new URLSearchParams({
-    query: $('#catalog-query').value.trim(), tag: $('#catalog-tag').value.trim(), family: state.models.find((model) => model.id === $('#model').value)?.family || 'pony',
-    sort: $('#catalog-sort').value, limit: '24', include_adult: $('#catalog-adult').checked ? 'true' : 'false',
+    query: valueOf('#catalog-query').trim(), tag: valueOf('#catalog-tag').trim(), family: state.models.find((model) => model.id === valueOf('#model'))?.family || 'pony',
+    sort: valueOf('#catalog-sort', 'Most Downloaded'), period: valueOf('#catalog-period', 'AllTime'), base_filter: valueOf('#catalog-base-filter', 'compatible'),
+    date_from: valueOf('#catalog-date-from'), date_to: valueOf('#catalog-date-to'),
+    limit: '24', include_adult: checkedOf('#catalog-adult') ? 'true' : 'false',
   });
   if (append && state.catalogCursor) params.set('cursor', state.catalogCursor);
   try {
@@ -346,10 +368,12 @@ async function loadCatalog({append = false} = {}) {
     } else {
       renderCatalog(payload.items);
     }
-    $('#next-catalog').disabled = !state.catalogCursor;
+    const next = $('#next-catalog');
+    if (next) next.disabled = !state.catalogCursor;
     const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
     const fallbackState = payload.fallback_used ? ' // BUSCA AMPLIADA' : '';
-    $('#catalog-note').textContent = `${payload.items.length} sinais encontrados // base ${payload.base_model || 'compatível'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'} // ${authState}${fallbackState}`;
+    const note = $('#catalog-note');
+    if (note) note.textContent = `${(payload.items || []).length} sinais encontrados // base ${payload.base_model || 'compatível'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'} // ${authState}${fallbackState}`;
   } catch (error) {
     toast(error.message, true);
   } finally { button.disabled = false; }
@@ -362,7 +386,7 @@ function promptStoreCard(item, index) {
   const loraCount = (item.loras || []).length;
   return `<article class="prompt-card${item.prompt ? '' : ' no-meta'}">
     <div class="prompt-card-preview"><img loading="lazy" src="${escapeHtml(item.image || '')}" alt="Preview de prompt por ${escapeHtml(item.username || 'autor desconhecido')}" referrerpolicy="no-referrer" />${item.nsfw ? '<span class="prompt-card-badge">+18</span>' : ''}</div>
-    <div class="prompt-card-body"><p class="prompt-card-prompt" title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="prompt-card-meta"><span>${escapeHtml(item.username || 'AUTOR --')}</span><span>${escapeHtml(size)}</span></div><div class="prompt-card-tags" title="${escapeHtml(tags)}">${escapeHtml(tags)}</div><button type="button" data-prompt-remix="${index}" ${item.prompt ? '' : 'disabled'}>⟳ REMIXAR PROMPT${loraCount ? ` // ${loraCount} LoRA` : ''}</button></div>
+    <div class="prompt-card-body"><p class="prompt-card-prompt" title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="prompt-card-meta"><span>${escapeHtml(item.username || 'AUTOR --')}</span><span>${escapeHtml(size)}</span></div><small class="prompt-card-date">CRIADO: ${escapeHtml(formatDate(item.created_at))}</small><div class="prompt-card-tags" title="${escapeHtml(tags)}">${escapeHtml(tags)}</div><button type="button" data-prompt-remix="${index}" ${item.prompt ? '' : 'disabled'}>⟳ REMIXAR PROMPT${loraCount ? ` // ${loraCount} LoRA` : ''}</button></div>
   </article>`;
 }
 
@@ -421,24 +445,29 @@ function shufflePromptItems(items) {
 
 async function loadPromptStore({append = false, random = false} = {}) {
   const button = $('#search-prompt-store');
+  if (!button) return;
   button.disabled = true;
-  if (random) $('#prompt-store-sort').value = 'Random';
+  if (random && $('#prompt-store-sort')) $('#prompt-store-sort').value = 'Random';
   const params = new URLSearchParams({
-    query: $('#prompt-store-query').value.trim(), sort: $('#prompt-store-sort').value,
-    limit: '24', include_adult: $('#prompt-store-adult').checked ? 'true' : 'false',
+    query: valueOf('#prompt-store-query').trim(), tag: valueOf('#prompt-store-tag').trim(), username: valueOf('#prompt-store-username').trim(),
+    sort: valueOf('#prompt-store-sort', 'Most Reactions'), period: valueOf('#prompt-store-period', 'AllTime'), base_filter: valueOf('#prompt-store-base-filter', 'compatible'),
+    date_from: valueOf('#prompt-store-date-from'), date_to: valueOf('#prompt-store-date-to'),
+    limit: '24', include_adult: checkedOf('#prompt-store-adult') ? 'true' : 'false',
     filters: [...state.promptFilters].join(','),
-    family: state.models.find((model) => model.id === $('#model').value)?.family || 'pony',
+    family: state.models.find((model) => model.id === valueOf('#model'))?.family || 'pony',
   });
   if (append && state.promptStoreCursor) params.set('cursor', state.promptStoreCursor);
   try {
     const payload = await api(`/api/prompt-store?${params}`);
-    const randomMode = $('#prompt-store-sort').value === 'Random';
+    const randomMode = valueOf('#prompt-store-sort', 'Most Reactions') === 'Random';
     const incomingItems = randomMode ? shufflePromptItems(payload.items || []) : (payload.items || []);
     state.promptStoreCursor = payload.next_cursor || null;
     renderPromptStore(incomingItems, {append});
-    $('#next-prompt-store').disabled = !state.promptStoreCursor;
+    const next = $('#next-prompt-store');
+    if (next) next.disabled = !state.promptStoreCursor;
     const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
-    $('#prompt-store-note').textContent = `${incomingItems.length} prompts encontrados // ${String(payload.family || 'pony').toUpperCase()} // ${randomMode ? 'ordem aleatória renovada' : 'ordem por relevância'} // ${state.promptFilters.size ? `filtros: ${[...state.promptFilters].join(' + ')} // ` : ''}${payload.includes_adult ? '+18 INCLUÍDO' : 'MODO PADRÃO'} // ${authState}`;
+    const note = $('#prompt-store-note');
+    if (note) note.textContent = `${incomingItems.length} prompts encontrados // ${String(payload.family || 'pony').toUpperCase()} // ${randomMode ? 'ordem aleatória renovada' : 'ordem por relevância'} // ${state.promptFilters.size ? `filtros: ${[...state.promptFilters].join(' + ')} // ` : ''}${payload.includes_adult ? '+18 INCLUÍDO' : 'MODO PADRÃO'} // ${authState}`;
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
 }
@@ -576,14 +605,6 @@ async function refreshHistory({sync = false} = {}) {
   } catch (error) { toast(error.message, true); }
 }
 
-function setStageProgress(barId, numberId, value) {
-  const progress = Math.max(0, Math.min(100, Number(value) || 0));
-  const bar = $(`#${barId}`);
-  const number = $(`#${numberId}`);
-  if (bar) bar.style.width = `${progress}%`;
-  if (number) number.textContent = `${progress}%`;
-}
-
 function setTelemetry(job) {
   const status = job?.status || 'idle';
   const downloadProgress = status === 'completed' ? 100 : (Number(job?.download_progress) || 0);
@@ -617,8 +638,6 @@ function setTelemetry(job) {
   };
   $('#progress-bar').style.width = `${mainProgress}%`;
   $('#progress-number').textContent = `${mainProgress}%`;
-  setStageProgress('download-progress-bar', 'download-progress-number', downloadProgress);
-  setStageProgress('pipeline-progress-bar', 'pipeline-progress-number', pipelineProgress);
   $('#vram-readout').textContent = `VRAM // ${job?.vram_gb ? `${job.vram_gb} GB` : '--'}`;
   const labels = {queued:'NO BUFFER', running:'SINAL EM PROCESSAMENTO', completed:'SINAL ARQUIVADO', failed:'FALHA DE SINAL', idle:'EM ESPERA'};
   $('#telemetry-title').textContent = labels[status] || 'EM ESPERA';
@@ -684,14 +703,15 @@ async function bootstrap() {
     state.csrf = payload.csrf;
     state.limits = {...state.limits, ...(payload.limits || {})};
     setNode(true);
-    setArchiveState(payload.archive);
-    state.archiveReady = payload.archive?.ready === true;
-    if (!payload.archive.available && payload.archive?.ready !== true) {
+    const archive = payload.archive || {available: false, ready: false};
+    setArchiveState(archive);
+    state.archiveReady = archive.ready === true;
+    if (!archive.available && archive.ready !== true) {
       log('Arquivo MEGA conectando em segundo plano; a galeria local continua disponível.');
       clearInterval(state.archiveTimer);
       state.archiveTimer = setInterval(refreshArchiveState, 1500);
-    } else if (!payload.archive.available) {
-      log(payload.archive.error || 'Arquivo MEGA indisponível; a galeria local continua disponível.');
+    } else if (!archive.available) {
+      log(archive.error || 'Arquivo MEGA indisponível; a galeria local continua disponível.');
     }
     renderModels(payload.models || [], payload.last_settings?.model || payload.model?.id || '');
     restoreLastSettings(payload.last_settings);
@@ -703,7 +723,7 @@ async function bootstrap() {
     const active = (payload.jobs || []).find((item) => ['queued', 'running'].includes(item.status));
     if (active) { state.activeJobId = active.id; setTelemetry(active); state.pollTimer = setInterval(pollJob, 1200); }
     else setTelemetry(null);
-    log(payload.model.cached ? 'Checkpoint encontrado no cache do nó.' : 'Checkpoint será obtido na primeira renderização.');
+    log(payload.model?.cached ? 'Checkpoint encontrado no cache do nó.' : 'Checkpoint será obtido na primeira renderização.');
   } catch (error) {
     setNode(false);
     toast(error.message, true);
@@ -737,43 +757,44 @@ function bindEvents() {
   $$('.mode').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
   $$('.edit-level').forEach((button) => button.addEventListener('click', () => setEditLevel(button.dataset.editLevel)));
   $$('.tag-bank button').forEach((button) => button.addEventListener('click', () => appendTag(button.dataset.target, button.textContent)));
-  $('#source-image').addEventListener('change', (event) => { $('#upload-name').textContent = event.target.files[0] ? event.target.files[0].name : 'NENHUM ARQUIVO NO BUFFER'; });
-  $('#model').addEventListener('change', (event) => updateModelProfile(event.target.value));
-  $('#settings-model').addEventListener('change', (event) => { $('#model').value = event.target.value; updateModelProfile(event.target.value); });
-  $('#sampler').addEventListener('change', (event) => { if ($('#settings-sampler')) $('#settings-sampler').value = event.target.value; });
-  $('#settings-sampler').addEventListener('change', (event) => { $('#sampler').value = event.target.value; });
-  $('#generation-form').addEventListener('submit', submitJob);
-  $('#open-catalog').addEventListener('click', () => { $('#catalog-dialog').showModal(); loadCatalog(); });
-  $('#close-catalog').addEventListener('click', () => $('#catalog-dialog').close());
-  $('#search-catalog').addEventListener('click', () => { state.catalogCursor = null; loadCatalog(); });
-  ['#catalog-query', '#catalog-tag'].forEach((selector) => $(selector).addEventListener('keydown', (event) => {
+  on('#source-image', 'change', (event) => { const name = $('#upload-name'); if (name) name.textContent = event.target.files[0] ? event.target.files[0].name : 'NENHUM ARQUIVO NO BUFFER'; });
+  on('#model', 'change', (event) => updateModelProfile(event.target.value));
+  on('#settings-model', 'change', (event) => { if ($('#model')) $('#model').value = event.target.value; updateModelProfile(event.target.value); });
+  on('#sampler', 'change', (event) => { if ($('#settings-sampler')) $('#settings-sampler').value = event.target.value; });
+  on('#settings-sampler', 'change', (event) => { if ($('#sampler')) $('#sampler').value = event.target.value; });
+  on('#generation-form', 'submit', submitJob);
+  on('#open-catalog', 'click', () => { $('#catalog-dialog')?.showModal(); loadCatalog(); });
+  on('#close-catalog', 'click', () => $('#catalog-dialog')?.close());
+  on('#search-catalog', 'click', () => { state.catalogCursor = null; loadCatalog(); });
+  ['#catalog-query', '#catalog-tag'].forEach((selector) => on(selector, 'keydown', (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     state.catalogCursor = null;
     loadCatalog();
   }));
-  $('#catalog-adult').addEventListener('change', () => { state.catalogCursor = null; $('#next-catalog').disabled = true; });
-  $('#next-catalog').addEventListener('click', () => loadCatalog({append: true}));
-  $('#open-model-settings').addEventListener('click', openModelSettings);
-  $('#open-model-settings-inline').addEventListener('click', openModelSettings);
-  $('#close-model-settings').addEventListener('click', () => $('#settings-dialog').close());
-  $('#open-model-store').addEventListener('click', openModelStore);
-  $('#close-model-store').addEventListener('click', () => $('#model-store-dialog').close());
-  $('#search-model-store').addEventListener('click', () => { state.modelStoreCursor = null; loadModelStore(); });
-  $('#model-store-family').addEventListener('change', () => { state.modelStoreCursor = null; loadModelStore(); });
-  $('#model-store-sort').addEventListener('change', () => { state.modelStoreCursor = null; loadModelStore(); });
-  $('#model-store-adult').addEventListener('change', () => { state.modelStoreCursor = null; loadModelStore(); });
-  ['#model-store-query', '#model-store-tag'].forEach((selector) => $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); state.modelStoreCursor = null; loadModelStore(); } }));
-  $('#next-model-store').addEventListener('click', () => loadModelStore({append: true}));
-  const openPromptStore = () => { state.promptStoreCursor = null; $('#prompt-store-dialog').showModal(); loadPromptStore(); };
-  $('#open-prompt-store').addEventListener('click', openPromptStore);
-  $('#open-prompt-store-top').addEventListener('click', openPromptStore);
-  $('#close-prompt-store').addEventListener('click', () => $('#prompt-store-dialog').close());
-  $('#search-prompt-store').addEventListener('click', () => { state.promptStoreCursor = null; loadPromptStore(); });
-  $('#prompt-store-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); state.promptStoreCursor = null; loadPromptStore(); } });
-  $('#prompt-store-sort').addEventListener('change', () => { state.promptStoreCursor = null; loadPromptStore(); });
-  $('#prompt-store-adult').addEventListener('change', () => { state.promptStoreCursor = null; loadPromptStore(); });
-  $('#random-prompt-store').addEventListener('click', () => { state.promptStoreCursor = null; loadPromptStore({random: true}); });
+  ['#catalog-sort', '#catalog-period', '#catalog-base-filter', '#catalog-date-from', '#catalog-date-to'].forEach((selector) => on(selector, 'change', () => { state.catalogCursor = null; loadCatalog(); }));
+  on('#catalog-adult', 'change', () => { state.catalogCursor = null; const next = $('#next-catalog'); if (next) next.disabled = true; loadCatalog(); });
+  on('#next-catalog', 'click', () => loadCatalog({append: true}));
+  on('#open-model-settings', 'click', openModelSettings);
+  on('#open-model-settings-inline', 'click', openModelSettings);
+  on('#close-model-settings', 'click', () => $('#settings-dialog')?.close());
+  on('#open-model-store', 'click', openModelStore);
+  on('#close-model-store', 'click', () => $('#model-store-dialog')?.close());
+  on('#search-model-store', 'click', () => { state.modelStoreCursor = null; loadModelStore(); });
+  on('#model-store-family', 'change', () => { state.modelStoreCursor = null; loadModelStore(); });
+  on('#model-store-sort', 'change', () => { state.modelStoreCursor = null; loadModelStore(); });
+  on('#model-store-adult', 'change', () => { state.modelStoreCursor = null; loadModelStore(); });
+  ['#model-store-query', '#model-store-tag'].forEach((selector) => on(selector, 'keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); state.modelStoreCursor = null; loadModelStore(); } }));
+  on('#next-model-store', 'click', () => loadModelStore({append: true}));
+  const openPromptStore = () => { state.promptStoreCursor = null; $('#prompt-store-dialog')?.showModal(); loadPromptStore(); };
+  on('#open-prompt-store', 'click', openPromptStore);
+  on('#open-prompt-store-top', 'click', openPromptStore);
+  on('#close-prompt-store', 'click', () => $('#prompt-store-dialog')?.close());
+  on('#search-prompt-store', 'click', () => { state.promptStoreCursor = null; loadPromptStore(); });
+  ['#prompt-store-query', '#prompt-store-tag', '#prompt-store-username'].forEach((selector) => on(selector, 'keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); state.promptStoreCursor = null; loadPromptStore(); } }));
+  ['#prompt-store-sort', '#prompt-store-period', '#prompt-store-base-filter', '#prompt-store-date-from', '#prompt-store-date-to'].forEach((selector) => on(selector, 'change', () => { state.promptStoreCursor = null; loadPromptStore(); }));
+  on('#prompt-store-adult', 'change', () => { state.promptStoreCursor = null; loadPromptStore(); });
+  on('#random-prompt-store', 'click', () => { state.promptStoreCursor = null; loadPromptStore({random: true}); });
   $$('.prompt-filter-chip').forEach((button) => button.addEventListener('click', () => {
     const term = button.dataset.promptFilter;
     if (state.promptFilters.has(term)) state.promptFilters.delete(term); else state.promptFilters.add(term);
@@ -781,15 +802,20 @@ function bindEvents() {
     state.promptStoreCursor = null;
     loadPromptStore();
   }));
-  $('#next-prompt-store').addEventListener('click', () => loadPromptStore({append: true}));
-  $('#refresh-history').addEventListener('click', () => { refreshHistory({sync: true}); log('Solicitando sincronização do arquivo MEGA.'); });
-  $('#close-image-dialog').addEventListener('click', () => $('#image-dialog').close());
-  $('#image-dialog-remix').addEventListener('click', () => { if (state.previewJobId) remixHistoryJob(state.previewJobId); });
-  $('#logout').addEventListener('click', async () => { try { await api('/api/logout', {method: 'POST'}); } finally { window.location.assign('/'); } });
+  on('#next-prompt-store', 'click', () => loadPromptStore({append: true}));
+  on('#refresh-history', 'click', () => { refreshHistory({sync: true}); log('Solicitando sincronização do arquivo MEGA.'); });
+  on('#close-image-dialog', 'click', () => $('#image-dialog')?.close());
+  on('#image-dialog-remix', 'click', () => { if (state.previewJobId) remixHistoryJob(state.previewJobId); });
+  on('#logout', 'click', async () => { try { await api('/api/logout', {method: 'POST'}); } finally { window.location.assign('/'); } });
   wireParameterReadouts();
   setEditLevel('medium', {silent: true});
   setMode('text2img');
 }
 
-bindEvents();
-bootstrap();
+function startApp() {
+  bindEvents();
+  bootstrap();
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startApp, {once: true});
+else startApp();

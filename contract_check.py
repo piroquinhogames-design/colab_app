@@ -108,10 +108,25 @@ def main() -> None:
     if not server.GeneratorEngine._is_unsupported_lora_key("lora_unet_label_emb_0_0.alpha"):
         raise AssertionError("A chave alpha problemática deve ser identificada")
     app_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
+    index_source = (package_root / "static" / "index.html").read_text(encoding="utf-8")
     if "refreshArchiveState" not in app_source or "refreshHistory({sync: true})" not in app_source:
         raise AssertionError("O frontend deve atualizar e sincronizar o arquivo quando o MEGA conectar depois do bootstrap")
-    if any(token not in app_source for token in ("download-progress-number", "pipeline-progress-number", "setStageProgress")):
-        raise AssertionError("O frontend deve renderizar as porcentagens de download e carregamento da pipeline")
+    if any(token in app_source for token in ("download-progress-number", "pipeline-progress-number", "setStageProgress")) or any(token in index_source for token in ("download-progress-number", "pipeline-progress-number")):
+        raise AssertionError("O frontend não deve manter cartões duplicados de download/pipeline na telemetria")
+    if any(token not in app_source for token in ("progress-bar", "progress-number", "catalog-date-from", "prompt-store-date-from", "catalog-period", "prompt-store-period")):
+        raise AssertionError("O frontend deve manter o progresso principal e os filtros de data/período")
+    if "DOMContentLoaded" not in app_source or "const on = (selector, event, handler)" not in app_source or "valueOf = (selector" not in app_source:
+        raise AssertionError("A inicialização do frontend deve tolerar recarga com DOM/cache de versões diferentes")
+    if "@app.after_request" not in server_source or 'Cache-Control\"] = "no-store' not in server_source:
+        raise AssertionError("O shell e os assets devem impedir cache stale após atualização")
+    if "allow_remote=archive_ready.is_set()" not in server_source or "cached_remote" not in server_source:
+        raise AssertionError("O bootstrap não pode bloquear esperando a restauração remota de preferências")
+    if any(token not in index_source for token in ("catalog-date-to", "catalog-base-filter", "prompt-store-date-to", "prompt-store-username", "prompt-store-base-filter")):
+        raise AssertionError("A interface deve expor filtros completos nas duas lojas")
+    if not server._matches_date_range("2026-08-22T10:30:00Z", server._filter_day("2026-08-22"), server._filter_day("2026-08-22")):
+        raise AssertionError("O filtro de data deve aceitar o dia de publicação informado")
+    if server._matches_date_range("2026-08-21T23:59:00Z", server._filter_day("2026-08-22"), None):
+        raise AssertionError("O filtro de data deve excluir itens anteriores ao início")
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
     default_spec = server.get_model_spec()
