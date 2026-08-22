@@ -1,4 +1,4 @@
-import { restoreLastSettings as applyLastSettings } from '/static/settings.js?v=20260822-3';
+import { restoreLastSettings as applyLastSettings } from '/static/settings.js?v=20260822-4';
 
 const state = {
   csrf: null,
@@ -17,6 +17,7 @@ const state = {
   archiveTimer: null,
   archiveReady: false,
   historyItems: [],
+  lowPower: false,
   previewJobId: null,
   models: [],
   limits: {maxLoras: 8},
@@ -93,9 +94,61 @@ async function api(path, options = {}) {
   return payload;
 }
 
+const dateFormatter = new Intl.DateTimeFormat('pt-BR', {dateStyle: 'short', timeStyle: 'short'});
+
 function formatDate(value) {
   if (!value) return '--';
-  return new Intl.DateTimeFormat('pt-BR', {dateStyle: 'short', timeStyle: 'short'}).format(new Date(value));
+  return dateFormatter.format(new Date(value));
+}
+
+function detectLowPowerMode() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  return Boolean(
+    window.matchMedia?.('(max-width: 720px), (pointer: coarse)').matches
+    || connection?.saveData
+    || ['slow-2g', '2g'].includes(connection?.effectiveType)
+    || (Number(navigator.deviceMemory || 0) > 0 && Number(navigator.deviceMemory) <= 4)
+  );
+}
+
+function getJobPollDelay() {
+  if (document.visibilityState !== 'visible') return 5000;
+  return state.lowPower ? 2200 : 1200;
+}
+
+function getArchiveRetryDelay() {
+  if (document.visibilityState !== 'visible') return 15000;
+  return state.lowPower ? 7000 : 3000;
+}
+
+function stopJobPolling() {
+  clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+}
+
+function scheduleJobPolling(delay = getJobPollDelay()) {
+  stopJobPolling();
+  if (!state.activeJobId) return;
+  state.pollTimer = setTimeout(async () => {
+    state.pollTimer = null;
+    await pollJob();
+    if (state.activeJobId) scheduleJobPolling();
+  }, delay);
+}
+
+function stopArchivePolling() {
+  clearTimeout(state.archiveTimer);
+  state.archiveTimer = null;
+}
+
+function scheduleArchivePolling(delay = getArchiveRetryDelay()) {
+  stopArchivePolling();
+  if (state.archiveReady) return;
+  state.archiveTimer = setTimeout(async () => {
+    state.archiveTimer = null;
+    await refreshArchiveState();
+    if (!state.archiveReady) scheduleArchivePolling();
+  }, delay);
 }
 
 function setNode(online) {
@@ -255,7 +308,7 @@ function renderCatalog(items) {
     const civitaiUrl = `https://civitai.com/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
     return `
     <article class="catalog-card">
-      ${item.image ? `<img loading="lazy" src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" />` : ''}
+      ${item.image ? `<img loading="lazy" decoding="async" src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" />` : ''}
       ${item.mature ? '<span class="mature-badge">+18</span>' : ''}
       <h3>${escapeHtml(item.name || 'LoRA sem nome')}</h3>
       <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
@@ -297,7 +350,7 @@ function renderModelStore(items) {
   }
   grid.innerHTML = items.map((item) => `
     <article class="catalog-card model-store-card">
-      ${item.image ? `<img loading="lazy" src="${escapeHtml(item.image)}" alt="Preview de ${escapeHtml(item.name)}" referrerpolicy="no-referrer" />` : '<div class="model-card-placeholder">MODEL // PREVIEW</div>'}
+      ${item.image ? `<img loading="lazy" decoding="async" src="${escapeHtml(item.image)}" alt="Preview de ${escapeHtml(item.name)}" referrerpolicy="no-referrer" />` : '<div class="model-card-placeholder">MODEL // PREVIEW</div>'}
       <span class="model-family-pill">${escapeHtml(String(item.family || item.base_model || 'MODEL').toUpperCase())}</span>
       <h3>${escapeHtml(item.name || 'Checkpoint sem nome')}</h3>
       <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
@@ -385,7 +438,7 @@ function promptStoreCard(item, index) {
   const size = item.width && item.height ? `${item.width}×${item.height}` : 'DIMENSÃO --';
   const loraCount = (item.loras || []).length;
   return `<article class="prompt-card${item.prompt ? '' : ' no-meta'}">
-    <div class="prompt-card-preview"><img loading="lazy" src="${escapeHtml(item.image || '')}" alt="Preview de prompt por ${escapeHtml(item.username || 'autor desconhecido')}" referrerpolicy="no-referrer" />${item.nsfw ? '<span class="prompt-card-badge">+18</span>' : ''}</div>
+    <div class="prompt-card-preview"><img loading="lazy" decoding="async" src="${escapeHtml(item.image || '')}" alt="Preview de prompt por ${escapeHtml(item.username || 'autor desconhecido')}" referrerpolicy="no-referrer" />${item.nsfw ? '<span class="prompt-card-badge">+18</span>' : ''}</div>
     <div class="prompt-card-body"><p class="prompt-card-prompt" title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="prompt-card-meta"><span>${escapeHtml(item.username || 'AUTOR --')}</span><span>${escapeHtml(size)}</span></div><small class="prompt-card-date">CRIADO: ${escapeHtml(formatDate(item.created_at))}</small><div class="prompt-card-tags" title="${escapeHtml(tags)}">${escapeHtml(tags)}</div><button type="button" data-prompt-remix="${index}" ${item.prompt ? '' : 'disabled'}>⟳ REMIXAR PROMPT${loraCount ? ` // ${loraCount} LoRA` : ''}</button></div>
   </article>`;
 }
@@ -483,7 +536,7 @@ function imageCard(job) {
   const settings = `${mode}${editLevel} // ${job.params?.width ?? '--'}×${job.params?.height ?? '--'} // ${job.params?.steps ?? '--'} STEPS // CFG ${job.params?.guidance ?? '--'}${strength}${sampler}`;
   const jobId = encodeURIComponent(job.id);
   return `<article class="history-card" data-history-id="${jobId}">
-    <img loading="lazy" data-fullscreen="${jobId}" src="/api/history/${jobId}/image" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
+    <img loading="lazy" decoding="async" data-fullscreen="${jobId}" src="/api/history/${jobId}/image" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
     <div class="history-overlay"><p title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="history-actions-row"><button class="history-icon-button" data-fullscreen="${jobId}" type="button" title="Tela cheia" aria-label="Abrir imagem em tela cheia">⛶</button><button class="history-icon-button remix" data-remix-history="${jobId}" type="button" title="Remixar materiais" aria-label="Remixar esta imagem">⟳</button><button class="history-icon-button delete" data-delete-history="${jobId}" type="button" title="Excluir do histórico e do MEGA" aria-label="Excluir esta imagem">⌫</button><a class="download-link" href="/api/history/${jobId}/image?download=1" title="Baixar PNG">↓</a></div></div>
     <div class="history-meta"><strong>SEED ${escapeHtml(job.params?.seed)} // ${escapeHtml(model)}</strong><span>${escapeHtml(settings)}</span><span>${escapeHtml(loras)} // ${escapeHtml(formatDate(job.completed_at || job.created_at))}</span></div>
   </article>`;
@@ -652,8 +705,7 @@ async function pollJob() {
     const job = await api(`/api/jobs/${encodeURIComponent(state.activeJobId)}`);
     setTelemetry(job);
     if (['completed', 'failed'].includes(job.status)) {
-      clearInterval(state.pollTimer);
-      state.pollTimer = null;
+      stopJobPolling();
       state.activeJobId = null;
       await refreshHistory();
       if (job.status === 'completed') {
@@ -664,7 +716,9 @@ async function pollJob() {
         toast(job.error || 'A geração falhou.', true);
       }
     }
-  } catch (error) { toast(error.message, true); clearInterval(state.pollTimer); }
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 async function submitJob(event) {
@@ -692,8 +746,8 @@ async function submitJob(event) {
     if (!job.preferences_persisted) log('Preferências enfileiradas localmente; arquivo MEGA indisponível para salvar o último prompt.');
     log(`Job ${job.id.slice(0, 8)} colocado na fila.`);
     toast('Job enviado para o nó T4.');
-    state.pollTimer = setInterval(pollJob, 1200);
-    pollJob();
+    await pollJob();
+    if (state.activeJobId) scheduleJobPolling(0);
   } catch (error) { toast(error.message, true); $('#generate').disabled = false; }
 }
 
@@ -708,8 +762,7 @@ async function bootstrap() {
     state.archiveReady = archive.ready === true;
     if (!archive.available && archive.ready !== true) {
       log('Arquivo MEGA conectando em segundo plano; a galeria local continua disponível.');
-      clearInterval(state.archiveTimer);
-      state.archiveTimer = setInterval(refreshArchiveState, 1500);
+      scheduleArchivePolling();
     } else if (!archive.available) {
       log(archive.error || 'Arquivo MEGA indisponível; a galeria local continua disponível.');
     }
@@ -721,8 +774,11 @@ async function bootstrap() {
     // Releitura após o bootstrap cobre o caso em que a sessão MEGA acabou de conectar.
     await refreshHistory();
     const active = (payload.jobs || []).find((item) => ['queued', 'running'].includes(item.status));
-    if (active) { state.activeJobId = active.id; setTelemetry(active); state.pollTimer = setInterval(pollJob, 1200); }
-    else setTelemetry(null);
+    if (active) {
+      state.activeJobId = active.id;
+      setTelemetry(active);
+      scheduleJobPolling(0);
+    } else setTelemetry(null);
     log(payload.model?.cached ? 'Checkpoint encontrado no cache do nó.' : 'Checkpoint será obtido na primeira renderização.');
   } catch (error) {
     setNode(false);
@@ -754,6 +810,7 @@ function openModelStore() {
 }
 
 function bindEvents() {
+  state.lowPower = detectLowPowerMode();
   $$('.mode').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
   $$('.edit-level').forEach((button) => button.addEventListener('click', () => setEditLevel(button.dataset.editLevel)));
   $$('.tag-bank button').forEach((button) => button.addEventListener('click', () => appendTag(button.dataset.target, button.textContent)));
@@ -807,6 +864,11 @@ function bindEvents() {
   on('#close-image-dialog', 'click', () => $('#image-dialog')?.close());
   on('#image-dialog-remix', 'click', () => { if (state.previewJobId) remixHistoryJob(state.previewJobId); });
   on('#logout', 'click', async () => { try { await api('/api/logout', {method: 'POST'}); } finally { window.location.assign('/'); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (state.activeJobId && !state.pollTimer) scheduleJobPolling(0);
+    if (!state.archiveReady && !state.archiveTimer) scheduleArchivePolling(0);
+  });
   wireParameterReadouts();
   setEditLevel('medium', {silent: true});
   setMode('text2img');

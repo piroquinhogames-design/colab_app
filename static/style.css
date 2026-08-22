@@ -333,3 +333,76 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: ew-resize;
   .settings-grid, .model-store-filters { grid-template-columns: 1fr; }
   .settings-actions { align-items: flex-start; flex-direction: column; }
 }
+
+
+/* Mobile performance: preserve the visual language without keeping the GPU busy. */
+@media (max-width: 720px), (pointer: coarse) {
+  body::before,
+  body::after,
+  .noise,
+  .panel::before,
+  .node-status i {
+    animation: none !important;
+  }
+
+  body::before,
+  body::after,
+  .noise {
+    display: none !important;
+  }
+
+  .topbar,
+  .panel,
+  .catalog-dialog,
+  .prompt-store-dialog,
+  .settings-dialog,
+  .model-store-dialog,
+  .image-dialog,
+  .toast {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .topbar,
+  .panel {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 10px 28px rgba(0,0,0,.16);
+  }
+
+  .history-card,
+  .catalog-card,
+  .prompt-card {
+    contain: content;
+    content-visibility: auto;
+    contain-intrinsic-size: 240px;
+  }
+
+  .history-card:hover img,
+  .prompt-card:hover .prompt-card-preview img,
+  .history-icon-button:hover,
+  .catalog-card button:hover,
+  .civitai-link:hover,
+  .prompt-card button:hover {
+    transform: none;
+    filter: none;
+  }
+}
+
+@media (max-width: 720px) {
+  html { scroll-behavior: auto; }
+  .panel-shimmer,
+  .progress-bar::after {
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after,
+  .noise,
+  .panel::before,
+  .node-status i,
+  .panel-shimmer,
+  .progress-bar::after {
+    animation: none !important;
+  }
+}
