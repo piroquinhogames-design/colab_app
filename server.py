@@ -1447,20 +1447,57 @@ def prompt_store():
         meta = image.get("meta") or {}
         prompt = str(meta.get("prompt") or meta.get("Prompt") or "").strip()
         negative_prompt = str(meta.get("negativePrompt") or meta.get("Negative prompt") or "").strip()
-        resources = meta.get("civitaiResources") or []
+        resource_candidates: list[Any] = []
+        for resource_key in ("civitaiResources", "resources"):
+            candidate_resources = meta.get(resource_key) or []
+            if isinstance(candidate_resources, dict):
+                candidate_resources = [candidate_resources]
+            if isinstance(candidate_resources, list):
+                resource_candidates.extend(candidate_resources)
+        resources: list[dict[str, Any]] = []
+        seen_resource_keys: set[tuple[str, str, str]] = set()
+        for resource in resource_candidates:
+            if not isinstance(resource, dict):
+                continue
+            version_raw = resource.get("modelVersionId") or resource.get("versionId") or resource.get("model_version_id") or resource.get("version_id")
+            if version_raw:
+                resource_key = ("version", str(version_raw), str(resource.get("type", "")).lower())
+            else:
+                resource_key = ("raw", json.dumps(resource, sort_keys=True, default=str), "")
+            if resource_key in seen_resource_keys:
+                continue
+            seen_resource_keys.add(resource_key)
+            resources.append(resource)
         loras: list[dict[str, Any]] = []
+        seen_lora_versions: set[int] = set()
         for resource in resources:
             if str(resource.get("type", "")).lower() != "lora":
                 continue
             try:
-                version_id = int(resource.get("modelVersionId") or resource.get("versionId"))
+                version_id = int(resource.get("modelVersionId") or resource.get("versionId") or resource.get("model_version_id") or resource.get("version_id"))
             except (TypeError, ValueError):
                 continue
+            if version_id <= 0 or version_id in seen_lora_versions:
+                continue
+            seen_lora_versions.add(version_id)
+            try:
+                model_id = int(resource.get("modelId") or resource.get("model_id")) if (resource.get("modelId") or resource.get("model_id")) else None
+            except (TypeError, ValueError):
+                model_id = None
+            raw_weight = resource.get("weight", resource.get("strength", 0.8))
+            try:
+                weight = float(raw_weight if raw_weight is not None else 0.8)
+            except (TypeError, ValueError):
+                weight = 0.8
+            if weight != weight:
+                weight = 0.8
+            weight = max(0.0, min(1.5, weight))
+            name = str(resource.get("modelName") or resource.get("modelVersionName") or resource.get("name") or f"LoRA // {version_id}").strip()[:120]
             loras.append({
                 "version_id": version_id,
-                "model_id": None,
-                "name": f"LoRA // {version_id}",
-                "weight": float(resource.get("weight", 0.8) or 0.8),
+                "model_id": model_id,
+                "name": name or f"LoRA // {version_id}",
+                "weight": weight,
             })
         tags = [str(tag) for tag in (image.get("tags") or [])]
         resource_families = {

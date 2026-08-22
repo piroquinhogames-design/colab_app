@@ -223,11 +223,14 @@ def main() -> None:
     called = {}
     fallback_attempts = []
     class Response:
-        def __init__(self, empty=False):
+        def __init__(self, empty=False, payload=None):
             self.empty = empty
+            self.payload = payload
         def raise_for_status(self):
             return None
         def json(self):
+            if self.payload is not None:
+                return self.payload
             if self.empty:
                 return {"items": []}
             return {"items": [{
@@ -280,6 +283,38 @@ def main() -> None:
     assert_equal(adult_catalog.status_code, 200, "Catálogo adulto deve responder")
     assert_equal(called["params"]["nsfw"], "true", "Catálogo adulto deve solicitar nsfw=true")
     assert_equal(adult_catalog.get_json()["catalog_query"]["nsfw"], "true", "Resposta deve expor o filtro adulto aplicado")
+
+    prompt_payload = {
+        "items": [{
+            "id": 501, "url": "https://image.civitai.com/prompt-501/preview.png", "username": "prompt-artist",
+            "width": 1024, "height": 1024, "createdAt": "2026-08-20T12:00:00Z", "tags": ["portrait"],
+            "meta": {
+                "prompt": "cinematic portrait with adapters", "civitaiResources": [{
+                    "type": "lora", "modelVersionId": 73, "modelId": 42, "modelName": "Adapter One",
+                    "weight": "0.65", "baseModel": "Anima",
+                }],
+                "resources": [
+                    {"type": "lora", "versionId": 73, "modelId": 42, "modelName": "Adapter One", "weight": 0.65, "baseModel": "Anima"},
+                    {"type": "lora", "versionId": 74, "modelVersionName": "Adapter Two", "strength": 0.9, "baseModel": "Anima"},
+                ],
+            },
+        }], "metadata": {},
+    }
+    def fake_prompt_get(url, params, headers, timeout):
+        return Response(payload=prompt_payload)
+    server.requests.get = fake_prompt_get
+    try:
+        prompt_store = client.get("/api/prompt-store?limit=1&family=anima")
+    finally:
+        server.requests.get = original_get
+    assert_equal(prompt_store.status_code, 200, "Loja de Prompts deve responder")
+    prompt_json = prompt_store.get_json()
+    prompt_loras = prompt_json["items"][0]["loras"]
+    assert_equal([item["version_id"] for item in prompt_loras], [73, 74], "LoRAs de ambas as chaves de metadados devem ser unificadas sem duplicar")
+    assert_equal(prompt_loras[0]["model_id"], 42, "O model_id disponível deve ser preservado no remix")
+    assert_equal(prompt_loras[0]["name"], "Adapter One", "O nome do LoRA deve ser preservado no remix")
+    assert_equal(prompt_loras[0]["weight"], 0.65, "O peso do LoRA deve ser preservado no remix")
+    assert_equal(prompt_loras[1]["name"], "Adapter Two", "O nome da versão alternativa deve ser preservado no remix")
 
     remote: dict[str, bytes] = {}
     upload_destinations: list[object] = []
@@ -373,8 +408,8 @@ def main() -> None:
     frontend_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
     if "refreshHistory({sync: true})" not in frontend_source or "item.filename || item.id" not in frontend_source:
         raise AssertionError("Interface deve sincronizar e renderizar cards restaurados sem filename original")
-    if "https://civitai.com/models/" not in frontend_source or "#catalog-query" not in frontend_source:
-        raise AssertionError("Interface deve abrir o Civitai no domínio oficial e aceitar pesquisa por nome")
+    if "https://civitai.red/models/" not in frontend_source or "https://civitai.com/models/" in frontend_source or "#catalog-query" not in frontend_source:
+        raise AssertionError("Interface deve abrir os cartões no domínio civitai.red e aceitar pesquisa por nome")
     sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
     assert_equal(sync.status_code, 200, "Sincronização manual deve responder")
     sync_payload = sync.get_json()

@@ -34,7 +34,11 @@ export function restoreLastSettings(settings, dependencies) {
   const maxLoras = Number(state.limits?.maxLoras || 8);
   state.selectedLoras = Array.isArray(settings.loras) ? settings.loras
     .filter((item) => item && Number.isFinite(Number(item.version_id)) && typeof item.name === 'string')
-    .slice(0, maxLoras).map((item) => ({ ...item, weight: Number(item.weight ?? .8) })) : [];
+    .slice(0, maxLoras).map((item) => {
+      const rawWeight = Number(item.weight ?? .8);
+      const weight = Number.isFinite(rawWeight) ? Math.max(0, Math.min(1.5, rawWeight)) : .8;
+      return { ...item, version_id: Number(item.version_id), model_id: item.model_id ? Number(item.model_id) : null, weight };
+    }) : [];
   renderSelectedLoras();
   setMode(settings.mode === 'img2img' ? 'img2img' : 'text2img');
   if (typeof setEditLevel === 'function') setEditLevel(settings.edit_level || 'medium', {silent: true});

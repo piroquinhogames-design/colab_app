@@ -1,4 +1,4 @@
-import { restoreLastSettings as applyLastSettings } from '/static/settings.js?v=20260822-4';
+import { restoreLastSettings as applyLastSettings } from '/static/settings.js?v=20260822-5';
 
 const state = {
   csrf: null,
@@ -305,7 +305,7 @@ function renderCatalog(items) {
         ${escapeHtml(version.name || `Versão ${version.id}`)} // ${escapeHtml(version.base_model || 'base não informada')}
       </option>`).join('');
     const modelData = {model_id: item.id, name: item.name || 'LoRA sem nome', versions};
-    const civitaiUrl = `https://civitai.com/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
+    const civitaiUrl = `https://civitai.red/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
     return `
     <article class="catalog-card">
       ${item.image ? `<img loading="lazy" decoding="async" src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" />` : ''}
@@ -338,7 +338,7 @@ function bindCatalogActions() {
   $$('[data-version-select]').forEach((picker) => picker.addEventListener('change', () => {
     const card = picker.closest('.catalog-card');
     const link = card && card.querySelector('[data-civitai-link]');
-    if (link) link.href = `https://civitai.com/models/${encodeURIComponent(picker.dataset.versionSelect)}?modelVersionId=${encodeURIComponent(picker.value)}`;
+    if (link) link.href = `https://civitai.red/models/${encodeURIComponent(picker.dataset.versionSelect)}?modelVersionId=${encodeURIComponent(picker.value)}`;
   }));
 }
 
@@ -355,7 +355,7 @@ function renderModelStore(items) {
       <h3>${escapeHtml(item.name || 'Checkpoint sem nome')}</h3>
       <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
       <small>${escapeHtml(item.version || 'versão principal')} // ${escapeHtml(item.base_model || '--')}</small>
-      <div class="catalog-card-actions"><button type="button" data-use-model='${escapeHtml(JSON.stringify(item))}'>USAR ESTE PERFIL</button><a class="civitai-link" href="https://civitai.com/models/${encodeURIComponent(item.civitai_model_id)}?modelVersionId=${encodeURIComponent(item.version_id)}" target="_blank" rel="noopener noreferrer">ABRIR NO CIVITAI ↗</a></div>
+      <div class="catalog-card-actions"><button type="button" data-use-model='${escapeHtml(JSON.stringify(item))}'>USAR ESTE PERFIL</button><a class="civitai-link" href="https://civitai.red/models/${encodeURIComponent(item.civitai_model_id)}?modelVersionId=${encodeURIComponent(item.version_id)}" target="_blank" rel="noopener noreferrer">ABRIR NO CIVITAI ↗</a></div>
     </article>`).join('');
   $$('[data-use-model]').forEach((button) => button.addEventListener('click', () => {
     try { useModelFromStore(JSON.parse(button.dataset.useModel)); } catch { toast('Não foi possível interpretar este perfil de modelo.', true); }
@@ -474,11 +474,12 @@ async function remixPromptStoreItem(index) {
     const sizes = Array.from({length: ((1024 - 512) / 64) + 1}, (_, offset) => 512 + offset * 64);
     const width = sizes.includes(Number(item.width)) ? Number(item.width) : 1024;
     const height = sizes.includes(Number(item.height)) ? Number(item.height) : 1024;
-    restoreLastSettings({prompt: item.prompt, negative_prompt: item.negative_prompt || '', seed: -1, steps: Number(item.steps) || 28, guidance: Number(item.guidance) || 6.5, width, height, strength: .55, mode, edit_level: 'medium', loras: item.loras || []});
+    const remixLoras = Array.isArray(item.loras) ? item.loras : [];
+    restoreLastSettings({prompt: item.prompt, negative_prompt: item.negative_prompt || '', seed: -1, steps: Number(item.steps) || 28, guidance: Number(item.guidance) || 6.5, width, height, strength: .55, mode, edit_level: 'medium', loras: remixLoras});
     setMode(mode);
     $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
     $('#prompt-store-dialog').close();
-    toast('Prompt, parâmetros e LoRAs disponíveis carregados para remix TXT→IMG.');
+    toast(`Prompt, parâmetros e ${remixLoras.length} LoRA(s) disponíveis carregados para remix TXT→IMG.`);
     log(`Remix TXT→IMG da Loja de Prompts ${String(item.id || '').slice(0, 10)} preparado.`);
   } catch (error) { toast(error.message, true); }
 }
