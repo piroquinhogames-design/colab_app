@@ -60,7 +60,7 @@ for directory in (MODELS, LORAS, OUTPUTS, UPLOADS, HF_HUB_CACHE):
     directory.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
-MAX_LORAS = 3
+MAX_LORAS = int(os.environ.get("MODELLAB_MAX_LORAS", "8"))
 MODEL_URL = os.environ.get(
     "MODEL_URL", "https://civitai.com/api/download/models/3226184?fileId=3108312"
 )
@@ -137,15 +137,20 @@ def family_profile(family: str | None) -> dict[str, Any]:
 
 
 def civitai_base_for_family(family: str | None) -> str:
-    """Nome de base aceito pelo filtro baseModels da API do Civitai."""
+    """Retorna o rótulo local da base, sem assumir um enum mutável do Civitai."""
     return str(family_profile(family).get("lora_base", "SDXL 1.0"))
 
 
-def version_matches_family(version: dict[str, Any], family: str | None) -> bool:
+def version_matches_family(version: dict[str, Any], family: str | None, model_name: str = "") -> bool:
     expected = civitai_base_for_family(family).lower()
-    actual = str(version.get("baseModel") or "").lower()
+    actual = str(version.get("baseModel") or model_name or "").lower()
     if not actual:
         return False
+    if family == "anima":
+        # O Civitai já publicou versões com "Anima", "Anima B1 + A11"
+        # e nomes equivalentes. O filtro remoto é omitido para essa família
+        # e esta verificação local evita perder resultados legítimos.
+        return "anima" in actual
     if expected == "sdxl 1.0":
         return actual in {"sdxl 1.0", "sdxl"}
     return expected in actual or actual in expected
@@ -1142,25 +1147,58 @@ def catalog():
         family = "anima"
     params: dict[str, Any] = {
         "limit": min(max(int(request.args.get("limit", 24)), 1), 48), "types": "LORA",
-        "baseModels": civitai_base_for_family(family), "sort": request.args.get("sort", "Most Downloaded"),
+        "sort": request.args.get("sort", "Most Downloaded"),
         "period": request.args.get("period", "AllTime"), "primaryFileOnly": "true",
         "nsfw": "true" if include_adult else "false",
     }
+    # "Anima" não é garantidamente um valor do enum BaseModel em todas as
+    # versões da API. Para não transformar uma base nova em resposta vazia,
+    # buscamos todos os LoRAs e filtramos a compatibilidade localmente.
+    if family != "anima":
+        params["baseModels"] = civitai_base_for_family(family)
     if request.args.get("cursor"):
         params["cursor"] = request.args["cursor"]
-    if request.args.get("query"):
-        params["query"] = request.args["query"][:120]
+    query = request.args.get("query", "").strip()[:120]
+    if query:
+        # Tenta interpretar como ID ou URL de modelo antes de busca textual.
+        match = re.search(r"(?:models/|^)(\d+)", query)
+        if match:
+            params["ids"] = match.group(1)
+        else:
+            params["query"] = query
     if request.args.get("tag"):
         params["tag"] = request.args["tag"][:80]
+
+    fallback_used = False
     try:
         response = requests.get(f"{CIVITAI_BASE}/models", params=params, headers=civitai_headers(), timeout=25)
         response.raise_for_status()
         payload = response.json()
+
+        # Se uma busca textual (sem ID) retornar vazia e não for paginação,
+        # tenta relaxar o filtro de família, pois o criador pode ter marcado a
+        # base de forma genérica no Civitai.
+        if not payload.get("items") and "query" in params and not params.get("cursor"):
+            fallback_params = dict(params)
+            fallback_params.pop("baseModels", None)
+            fallback_response = requests.get(f"{CIVITAI_BASE}/models", params=fallback_params, headers=civitai_headers(), timeout=25)
+            fallback_response.raise_for_status()
+            fallback_payload = fallback_response.json()
+            if fallback_payload.get("items"):
+                payload = fallback_payload
+                fallback_used = True
     except requests.RequestException as exc:
         return jsonify({"error": f"Não foi possível consultar o catálogo Civitai: {str(exc)[:160]}"}), 502
     items = []
     for model in payload.get("items", []):
-        versions = [item for item in model.get("modelVersions", []) if version_matches_family(item, family)]
+        all_versions = [item for item in model.get("modelVersions", []) if isinstance(item, dict)]
+        versions = [item for item in all_versions if version_matches_family(item, family, str(model.get("name") or ""))]
+        # Uma busca textual/por ID deve priorizar o resultado oficial solicitado.
+        # Se a API não trouxe baseModel ou usou um rótulo novo, não escondemos o
+        # modelo: exibimos as versões publicadas e sinalizamos a busca ampliada.
+        if not versions and ("query" in params or "ids" in params) and all_versions:
+            versions = all_versions
+            fallback_used = True
         if not versions:
             continue
         version = versions[0]
@@ -1170,6 +1208,7 @@ def catalog():
             candidate_image = next((item.get("url") for item in candidate.get("images", []) if item.get("url")), None)
             version_items.append({
                 "id": candidate.get("id"), "name": candidate.get("name") or f"Versão {candidate.get('id')}",
+                "base_model": candidate.get("baseModel") or "não informado",
                 "image": candidate_image, "downloads": candidate.get("stats", {}).get("downloadCount", 0),
                 "created_at": candidate.get("createdAt"), "updated_at": candidate.get("updatedAt"),
             })
@@ -1182,6 +1221,7 @@ def catalog():
         "items": items, "next_cursor": payload.get("metadata", {}).get("nextCursor"),
         "family": family, "base_model": civitai_base_for_family(family),
         "includes_adult": include_adult, "catalog_query": {"nsfw": params["nsfw"], "authenticated": bool(os.environ.get("CIVITAI_TOKEN", "").strip())},
+        "fallback_used": fallback_used,
     })
 
 

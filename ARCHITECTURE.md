@@ -1,12 +1,12 @@
 # Arquitetura do ModelLab Studio
 
-O pacote é executado integralmente em uma sessão Google Colab com GPU T4. O processo Flask serve a interface, recebe solicitações autenticadas, gerencia uma única fila de geração e publica a porta local por meio de um Quick Tunnel. Nenhuma chave de Civitai, credencial MEGA ou senha do estúdio é enviada ao navegador.
+O pacote é executado integralmente em uma sessão Google Colab com GPU T4. O processo Flask serve a interface, recebe solicitações autenticadas, gerencia uma única fila de geração e publica a porta local por meio de um Cloudflare Quick Tunnel. Nenhuma chave de Civitai, credencial MEGA ou senha do estúdio é enviada ao navegador.
 
 ## Interface e seleção de família
 
 O formulário principal mostra somente o modelo ativo. Checkpoint, sampler e loja de modelos ficam no diálogo **Configurações**. O bootstrap envia os perfis públicos com família, base, engine, disponibilidade, cache e defaults. A interface aplica o preset do perfil e atualiza automaticamente os rótulos e as lojas de LoRAs e prompts.
 
-O perfil inicial é `prefect-pony-xl-v6`, com base `Pony`, modelo Civitai `439889`, versão `2114187` e engine `sdxl`. O runtime baixa o arquivo SafeTensor single-file do Civitai com retomada HTTP e cria as pipelines `StableDiffusionXLPipeline` e `StableDiffusionXLImg2ImgPipeline` diretamente a partir do checkpoint fp16. O fluxo oferece TXT→IMG e IMG→IMG; o cache Hugging Face permanece disponível para perfis que precisem de componentes auxiliares, mas não é exigido pelo perfil padrão.
+O perfil inicial é `nova-exanime-am`, com base `Anima B1 + A11`, modelo Civitai `2856434`, versão `3226184` e engine `comfyui`. O runtime baixa o checkpoint SafeTensor do Civitai com retomada HTTP, prepara as dependências Anima do ComfyUI e envia workflows headless para a API local. O fluxo atual oferece TXT→IMG; IMG→IMG fica bloqueado para o perfil Anima até existir um workflow compatível.
 
 ## Catálogo Civitai
 
@@ -16,13 +16,13 @@ A rota `POST /api/model-profile` recebe somente o identificador numérico do mod
 
 ## Lojas dependentes da família
 
-A rota `GET /api/catalog` inicia em `family=pony` e converte a família para o parâmetro `baseModels` da API Civitai. Quando o modelo muda, o frontend envia a nova família, atualiza a loja de LoRAs e limita os resultados às versões cujo `baseModel` seja compatível.
+A rota `GET /api/catalog` inicia na família ativa, consulta somente modelos do tipo `LORA`, aceita texto livre e IDs/URLs de modelos, usa cursor para paginação e aplica fallback quando a combinação de texto e base retorna vazia. Para Anima, o backend não depende de um valor rígido de `baseModels`, pois os enums do Civitai são mutáveis; a compatibilidade é filtrada localmente por `baseModel` e nome da versão.
 
 A rota `GET /api/prompt-store` também recebe a família ativa. O servidor consulta imagens com metadados, extrai recursos Civitai, prompts, dimensões e LoRAs, filtra recursos de outra família quando há informação suficiente e embaralha os itens no modo `Random`. A busca textual combina prompt, negative prompt, autor, tags e família; os filtros de chips são combinados como interseção.
 
 ## Engines e perfis
 
-O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl`, descarrega o pipeline anterior, libera a memória CUDA, retoma o checkpoint Civitai se houver `.part` e cria as pipelines text-to-image e image-to-image; jobs seguintes não repetem o download. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
+O `GeneratorEngine` mantém o backend ComfyUI headless e evita repetir o download quando o checkpoint já está preparado. O job publica progresso separado para download do modelo, carregamento da pipeline e geração; a barra principal reinicia em 0% ao iniciar cada fase e permanece em 100% somente após a imagem ser salva. Flux e SD 3 podem ser catalogados, mas ficam explicitamente bloqueados até receberem engines próprios.
 
 | Família | Engine | Loja de LoRAs | Estado padrão |
 |---|---|---|---|
@@ -34,7 +34,7 @@ O `GeneratorEngine` troca pipelines somente quando o `model_id` muda. Para `sdxl
 
 ## Persistência
 
-Cada resultado gera dois arquivos: `outputs/<job_id>.png` e `outputs/<job_id>.json`. O JSON inclui identificador, data UTC, prompts, seed efetivamente usada, modelo, sampler, parâmetros, LoRAs, estado final e referências de armazenamento. Após uma geração bem-sucedida, os dois arquivos e o manifesto `last_settings.json` são enviados ao diretório configurado da conta MEGA. Ao inicializar uma nova sessão, o servidor recupera os JSONs para recompor a galeria; a imagem é baixada sob demanda apenas se não existir no cache local.
+Cada resultado gera dois arquivos: `outputs/<job_id>.png` e `outputs/<job_id>.json`. O JSON inclui identificador, data UTC, prompts, seed efetivamente usada, modelo, sampler, parâmetros, LoRAs, estado final e referências de armazenamento. Após uma geração bem-sucedida, o PNG local libera o job imediatamente como concluído; o envio dos dois arquivos e do manifesto `last_settings.json` ao diretório configurado da conta MEGA continua em segundo plano. Ao inicializar uma nova sessão, o servidor recupera os JSONs para recompor a galeria; a imagem é baixada sob demanda apenas se não existir no cache local.
 
 A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execução não podem ser removidos. Para um job sincronizado, o servidor primeiro tenta excluir `<job_id>.png` e `<job_id>.json` no MEGA; somente após essa confirmação remove o cache local e o registro em memória. Se o arquivo remoto estiver indisponível, a operação é recusada para evitar exclusão incompleta.
 
@@ -76,4 +76,4 @@ A rota `DELETE /api/history/<job_id>` exige autenticação e CSRF. Jobs em execu
 }
 ```
 
-O app aceita um máximo de 3 LoRAs por job, resoluções múltiplas de 64 entre 512 e 1024 pixels para SDXL, 10–60 steps e escala de guidance entre 1 e 15. O Prefect Pony XL V6 aceita TXT→IMG e IMG→IMG no fluxo atual. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.
+O app aceita até `MODELLAB_MAX_LORAS` LoRAs por job, com padrão de 8, resoluções múltiplas de 64 entre 512 e 1024 pixels, 10–60 steps e escala de guidance entre 1 e 15. O perfil Nova EXAnime AM aceita TXT→IMG no workflow Anima atual. Os perfis individuais podem fornecer defaults diferentes, mas os limites de segurança continuam sendo validados no servidor.

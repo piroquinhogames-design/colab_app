@@ -12,7 +12,7 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. O perfil **Nova EXAnime AM** e o backend **ComfyUI headless** são configurados automaticamente; nenhum navegador do ComfyUI é aberto. O token é utilizado apenas pelo processo do servidor para consultar/baixar recursos do Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
+O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. Não é mais necessário token do ngrok, pois o endereço público é criado automaticamente pelo Cloudflare Tunnel. O perfil **Nova EXAnime AM** e o backend **ComfyUI headless** são configurados automaticamente; nenhum navegador do ComfyUI é aberto. O token é utilizado apenas pelo processo do servidor para consultar/baixar recursos do Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
 A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Hugging Face Hub 0.34.0–0.x**, **hf-xet 1.1.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, além das dependências nativas do ComfyUI, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
 

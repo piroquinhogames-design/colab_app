@@ -19,6 +19,7 @@ const state = {
   historyItems: [],
   previewJobId: null,
   models: [],
+  limits: {maxLoras: 8},
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -209,8 +210,9 @@ function addLora(lora) {
     toast('Esse LoRA já está no rack.', true);
     return;
   }
-  if (state.selectedLoras.length >= 3) {
-    toast('O rack suporta no máximo três LoRAs por geração.', true);
+  const maxLoras = Number(state.limits?.maxLoras || 8);
+  if (state.selectedLoras.length >= maxLoras) {
+    toast(`O rack suporta no máximo ${maxLoras} LoRAs por geração.`, true);
     return;
   }
   state.selectedLoras.push({...lora, weight: .8});
@@ -232,16 +234,17 @@ function renderCatalog(items) {
     const selected = versions.find((version) => Number(version.id) === Number(item.version_id)) || versions[0];
     const versionOptions = versions.map((version) => `
       <option value="${escapeHtml(version.id)}" ${Number(version.id) === Number(selected.id) ? 'selected' : ''}>
-        ${escapeHtml(version.name || `Versão ${version.id}`)}
+        ${escapeHtml(version.name || `Versão ${version.id}`)} // ${escapeHtml(version.base_model || 'base não informada')}
       </option>`).join('');
     const modelData = {model_id: item.id, name: item.name || 'LoRA sem nome', versions};
-    const civitaiUrl = `https://civitai.red/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
+    const civitaiUrl = `https://civitai.com/models/${encodeURIComponent(item.id)}?modelVersionId=${encodeURIComponent(selected.id)}`;
     return `
     <article class="catalog-card">
       ${item.image ? `<img loading="lazy" src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" />` : ''}
       ${item.mature ? '<span class="mature-badge">+18</span>' : ''}
       <h3>${escapeHtml(item.name || 'LoRA sem nome')}</h3>
       <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
+      <small class="catalog-base-label">BASE: ${escapeHtml(selected.base_model || 'não informada')}</small>
       <label class="version-picker">VERSÃO
         <select data-version-select="${escapeHtml(item.id)}" aria-label="Versão de ${escapeHtml(item.name || 'LoRA')}">${versionOptions}</select>
       </label>
@@ -266,7 +269,7 @@ function bindCatalogActions() {
   $$('[data-version-select]').forEach((picker) => picker.addEventListener('change', () => {
     const card = picker.closest('.catalog-card');
     const link = card && card.querySelector('[data-civitai-link]');
-    if (link) link.href = `https://civitai.red/models/${encodeURIComponent(picker.dataset.versionSelect)}?modelVersionId=${encodeURIComponent(picker.value)}`;
+    if (link) link.href = `https://civitai.com/models/${encodeURIComponent(picker.dataset.versionSelect)}?modelVersionId=${encodeURIComponent(picker.value)}`;
   }));
 }
 
@@ -283,7 +286,7 @@ function renderModelStore(items) {
       <h3>${escapeHtml(item.name || 'Checkpoint sem nome')}</h3>
       <p>${escapeHtml(item.creator || 'autor desconhecido')} // ${Number(item.downloads || 0).toLocaleString('pt-BR')} DL</p>
       <small>${escapeHtml(item.version || 'versão principal')} // ${escapeHtml(item.base_model || '--')}</small>
-      <div class="catalog-card-actions"><button type="button" data-use-model='${escapeHtml(JSON.stringify(item))}'>USAR ESTE PERFIL</button><a class="civitai-link" href="https://civitai.red/models/${encodeURIComponent(item.civitai_model_id)}?modelVersionId=${encodeURIComponent(item.version_id)}" target="_blank" rel="noopener noreferrer">ABRIR NO CIVITAI ↗</a></div>
+      <div class="catalog-card-actions"><button type="button" data-use-model='${escapeHtml(JSON.stringify(item))}'>USAR ESTE PERFIL</button><a class="civitai-link" href="https://civitai.com/models/${encodeURIComponent(item.civitai_model_id)}?modelVersionId=${encodeURIComponent(item.version_id)}" target="_blank" rel="noopener noreferrer">ABRIR NO CIVITAI ↗</a></div>
     </article>`).join('');
   $$('[data-use-model]').forEach((button) => button.addEventListener('click', () => {
     try { useModelFromStore(JSON.parse(button.dataset.useModel)); } catch { toast('Não foi possível interpretar este perfil de modelo.', true); }
@@ -345,7 +348,8 @@ async function loadCatalog({append = false} = {}) {
     }
     $('#next-catalog').disabled = !state.catalogCursor;
     const authState = payload.catalog_query?.authenticated ? 'TOKEN OK' : 'TOKEN AUSENTE';
-    $('#catalog-note').textContent = `${payload.items.length} sinais encontrados // base ${payload.base_model || 'compatível'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'} // ${authState}`;
+    const fallbackState = payload.fallback_used ? ' // BUSCA AMPLIADA' : '';
+    $('#catalog-note').textContent = `${payload.items.length} sinais encontrados // base ${payload.base_model || 'compatível'}${payload.includes_adult ? ' // +18 INCLUÍDO' : ' // MODO PADRÃO'} // ${authState}${fallbackState}`;
   } catch (error) {
     toast(error.message, true);
   } finally { button.disabled = false; }
@@ -582,9 +586,21 @@ function setStageProgress(barId, numberId, value) {
 
 function setTelemetry(job) {
   const status = job?.status || 'idle';
-  const progress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
   const downloadProgress = status === 'completed' ? 100 : (Number(job?.download_progress) || 0);
   const pipelineProgress = status === 'completed' ? 100 : (Number(job?.pipeline_progress) || 0);
+  const generateProgress = status === 'completed' ? 100 : Math.max(0, Math.min(100, Number(job?.progress) || 0));
+
+  let mainProgress = 0;
+  if (status === 'completed') {
+    mainProgress = 100;
+  } else if (downloadProgress < 100) {
+    mainProgress = downloadProgress;
+  } else if (pipelineProgress < 100) {
+    mainProgress = pipelineProgress;
+  } else {
+    mainProgress = generateProgress;
+  }
+
   const phaseLabels = {
     queued: 'Aguardando o job entrar no worker.',
     starting: 'Iniciando o carregamento do modelo.',
@@ -599,8 +615,8 @@ function setTelemetry(job) {
     completed: 'Geração concluída.',
     failed: 'Falha durante a geração.',
   };
-  $('#progress-bar').style.width = `${progress}%`;
-  $('#progress-number').textContent = `${progress}%`;
+  $('#progress-bar').style.width = `${mainProgress}%`;
+  $('#progress-number').textContent = `${mainProgress}%`;
   setStageProgress('download-progress-bar', 'download-progress-number', downloadProgress);
   setStageProgress('pipeline-progress-bar', 'pipeline-progress-number', pipelineProgress);
   $('#vram-readout').textContent = `VRAM // ${job?.vram_gb ? `${job.vram_gb} GB` : '--'}`;
@@ -666,6 +682,7 @@ async function bootstrap() {
   try {
     const payload = await api('/api/bootstrap');
     state.csrf = payload.csrf;
+    state.limits = {...state.limits, ...(payload.limits || {})};
     setNode(true);
     setArchiveState(payload.archive);
     state.archiveReady = payload.archive?.ready === true;

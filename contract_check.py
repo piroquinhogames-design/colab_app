@@ -193,24 +193,43 @@ def main() -> None:
 
     rejected = client.post("/api/jobs", json={"prompt": ""}, headers={"X-CSRF-Token": csrf})
     assert_equal(rejected.status_code, 400, "Prompt vazio deve ser rejeitado")
+
+    # Testa o limite de LoRAs. O servidor deve truncar até MAX_LORAS e aceitar se for válido.
+    # Mas como valid_params recusa se MAX_LORAS truncar algo que seria necessário?
+    # Na verdade, MAX_LORAS apenas trunca na rota; o contrato valida o resultado.
+    # Para garantir que 4 LoRAs sejam aceitos quando MAX_LORAS=8, enviamos 4:
+    four_loras = [{"version_id": i, "model_id": 100+i, "weight": 0.5} for i in range(1, 5)]
+    accepted = client.post("/api/jobs", json={"prompt": "test 4 loras", "loras": four_loras}, headers={"X-CSRF-Token": csrf})
+    assert_equal(accepted.status_code, 202, "Quatro LoRAs devem ser aceitos pelo limite ampliado")
+
     blocked = client.post("/api/jobs", json={"prompt": "test"})
     assert_equal(blocked.status_code, 403, "Mutação sem CSRF deve ser bloqueada")
 
     called = {}
+    fallback_attempts = []
     class Response:
+        def __init__(self, empty=False):
+            self.empty = empty
         def raise_for_status(self):
             return None
         def json(self):
+            if self.empty:
+                return {"items": []}
             return {"items": [{
                 "id": 42, "name": "Adapter", "creator": {"username": "artist"}, "tags": ["style"],
                 "modelVersions": [
-                    {"id": 73, "name": "Anima Style", "baseModel": "Anima", "images": [], "stats": {"downloadCount": 8}},
-                    {"id": 74, "name": "Anima Detail", "baseModel": "Anima", "images": [], "stats": {"downloadCount": 5}},
+                    {"id": 73, "name": "Anima Style", "baseModel": "Anima B1 + A11", "images": [], "stats": {"downloadCount": 8}},
+                    {"id": 74, "name": "Anima Detail", "baseModel": "Anima B1 + A11", "images": [], "stats": {"downloadCount": 5}},
                     {"id": 75, "name": "Outra base", "baseModel": "SDXL 1.0", "images": [], "stats": {"downloadCount": 99}},
                 ],
             }], "metadata": {"nextCursor": "next-page"}}
     def fake_get(url, params, headers, timeout):
         called.update({"url": url, "params": params, "headers": headers, "timeout": timeout})
+        # Simula que a busca estrita com baseModels vem vazia para forçar o fallback,
+        # a menos que seja a própria chamada de fallback (que não tem baseModels).
+        if params.get("query") == "fallback_test" and not fallback_attempts:
+            fallback_attempts.append(True)
+            return Response(empty=True)
         return Response()
     original_get = server.requests.get
     server.requests.get = fake_get
@@ -219,14 +238,25 @@ def main() -> None:
     finally:
         server.requests.get = original_get
     assert_equal(catalog.status_code, 200, "Catálogo deve responder")
-    assert_equal(called["params"]["baseModels"], "Anima", "Catálogo deve filtrar Anima por padrão")
+    assert_equal(called["params"].get("baseModels"), None, "Catálogo Anima não deve depender de baseModels rígido")
     assert_equal(called["params"]["query"], "style adapter", "Catálogo deve encaminhar pesquisa por nome")
     catalog_json = catalog.get_json()
     assert_equal(catalog_json["items"][0]["version_id"], 73, "Versão padrão de LoRA deve ser exposta")
-    assert_equal([item["id"] for item in catalog_json["items"][0]["versions"]], [73, 74], "Todas as versões Pony devem ser expostas")
+    assert_equal([item["id"] for item in catalog_json["items"][0]["versions"]], [73, 74], "Todas as versões compatíveis devem ser expostas")
     assert_equal(catalog_json["items"][0]["versions"][1]["name"], "Anima Detail", "Nome da versão deve ser preservado")
     assert_equal(catalog_json["next_cursor"], "next-page", "Cursor deve ser preservado")
     assert_equal(called["params"]["nsfw"], "false", "Catálogo padrão deve declarar nsfw=false")
+
+    server.requests.get = fake_get
+    try:
+        fallback_catalog = client.get("/api/catalog?query=fallback_test")
+    finally:
+        server.requests.get = original_get
+    assert_equal(fallback_catalog.status_code, 200, "Catálogo deve responder ao fallback")
+    fallback_json = fallback_catalog.get_json()
+    assert_equal(fallback_json["fallback_used"], True, "O catálogo deve reportar que usou fallback")
+    assert_equal(called["params"].get("baseModels"), None, "O request final não deve ter baseModels")
+
     server.requests.get = fake_get
     try:
         adult_catalog = client.get("/api/catalog?include_adult=true")
@@ -328,8 +358,8 @@ def main() -> None:
     frontend_source = (package_root / "static" / "app.js").read_text(encoding="utf-8")
     if "refreshHistory({sync: true})" not in frontend_source or "item.filename || item.id" not in frontend_source:
         raise AssertionError("Interface deve sincronizar e renderizar cards restaurados sem filename original")
-    if "https://civitai.red/models/" not in frontend_source or "#catalog-query" not in frontend_source:
-        raise AssertionError("Interface deve abrir o Civitai no domínio .red e aceitar pesquisa por nome")
+    if "https://civitai.com/models/" not in frontend_source or "#catalog-query" not in frontend_source:
+        raise AssertionError("Interface deve abrir o Civitai no domínio oficial e aceitar pesquisa por nome")
     sync = client.post("/api/history/sync", headers={"X-CSRF-Token": csrf})
     assert_equal(sync.status_code, 200, "Sincronização manual deve responder")
     sync_payload = sync.get_json()
