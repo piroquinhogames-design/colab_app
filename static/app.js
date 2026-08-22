@@ -463,18 +463,14 @@ async function remixPromptStoreItem(index) {
   const item = state.promptStoreItems[index];
   if (!item?.prompt) return;
   try {
-    const mode = 'img2img';
-      const response = await fetch(`/api/prompt-store/image?url=${encodeURIComponent(item.image)}`);
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || 'Não foi possível preparar a imagem da Loja de Prompts.');
-      }
-      const blob = await response.blob();
-      const file = new File([blob], `prompt-store-${item.id || Date.now()}.jpg`, {type: blob.type || 'image/jpeg'});
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      $('#source-image').files = transfer.files;
-      $('#upload-name').textContent = `PROMPT STORE // ${file.name}`;
+    // A Loja de Prompts remixa o conteúdo textual. O workflow Anima publicado
+    // é TXT→IMG e rejeita img2img; portanto não tentamos baixar a preview nem
+    // enviar uma imagem-base que o backend não conseguiria processar.
+    const mode = 'text2img';
+    const source = $('#source-image');
+    if (source) source.value = '';
+    const uploadName = $('#upload-name');
+    if (uploadName) uploadName.textContent = 'NENHUM ARQUIVO NO BUFFER';
     const sizes = Array.from({length: ((1024 - 512) / 64) + 1}, (_, offset) => 512 + offset * 64);
     const width = sizes.includes(Number(item.width)) ? Number(item.width) : 1024;
     const height = sizes.includes(Number(item.height)) ? Number(item.height) : 1024;
@@ -482,8 +478,8 @@ async function remixPromptStoreItem(index) {
     setMode(mode);
     $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
     $('#prompt-store-dialog').close();
-    toast('Prompt, imagem de referência e recursos disponíveis carregados para remix.');
-    log(`Remix da Loja de Prompts ${String(item.id || '').slice(0, 10)} preparado.`);
+    toast('Prompt, parâmetros e LoRAs disponíveis carregados para remix TXT→IMG.');
+    log(`Remix TXT→IMG da Loja de Prompts ${String(item.id || '').slice(0, 10)} preparado.`);
   } catch (error) { toast(error.message, true); }
 }
 
