@@ -1008,9 +1008,39 @@ archive_restore_lock = threading.Lock()
 
 
 def restore_archive() -> None:
-    """Serializa restaurações para não competir com a preparação inicial do arquivo."""
+    """Tenta restaurar o histórico do MEGA com retéries, para não falhar de forma
+    definitiva por um erro transitório da API. Serializado para não competir com a
+    preparação inicial do arquivo."""
     with archive_restore_lock:
-        manager.restore()
+        for attempt in range(1, 4):
+            try:
+                manager.restore()
+                return
+            except Exception as exc:
+                archive.error = f"Falha ao restaurar do MEGA (tentativa {attempt}): {str(exc)[:160]}"
+                if attempt < 3:
+                    time.sleep(min(2 * attempt, 6))
+
+
+def _heal_archive_restore() -> None:
+    """Continua tentando restaurar em segundo plano até obter sucesso ou esgotar
+    as tentativas, cobrindo indisponibilidade/erro transitório do MEGA e mesclando
+    registros que existem apenas no arquivo remoto."""
+    for attempt in range(1, 7):
+        if attempt > 1:
+            time.sleep(15)
+        if not archive.available:
+            try:
+                archive.connect()
+            except Exception:
+                continue
+        if not archive.available:
+            continue
+        try:
+            restore_archive()
+            return
+        except Exception:
+            continue
 
 
 def initialize_archive() -> None:
@@ -1021,6 +1051,9 @@ def initialize_archive() -> None:
         archive.load_last_settings()
     finally:
         archive_ready.set()
+    # Se a restauração inicial falhou por erro transitório, segue tentando em
+    # segundo plano para que o histórico apareça sozinho assim que o MEGA responder.
+    threading.Thread(target=_heal_archive_restore, name="archive-restore-healer", daemon=True).start()
 
 
 threading.Thread(target=initialize_archive, name="archive-initializer", daemon=True).start()

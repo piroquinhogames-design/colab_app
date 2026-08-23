@@ -16,6 +16,8 @@ const state = {
   toastTimer: null,
   archiveTimer: null,
   archiveReady: false,
+  historyHealTimer: null,
+  historyHealed: false,
   historyItems: [],
   lowPower: false,
   previewJobId: null,
@@ -634,25 +636,51 @@ async function refreshArchiveState() {
       restoreLastSettings(payload.last_settings);
       await refreshHistory({sync: true});
       log('Conexão MEGA concluída; histórico, imagens pendentes e último prompt atualizados automaticamente.');
+      scheduleHistoryHeal();
     }
   } catch {
     // O bootstrap inicial continua funcional; a próxima tentativa fará a atualização.
   }
 }
 
-async function refreshHistory({sync = false} = {}) {
+async function refreshHistory({sync = false, silent = false} = {}) {
   try {
     const payload = await api(sync ? '/api/history/sync' : '/api/history', sync ? {method: 'POST'} : {});
     renderHistory(payload.items || []);
     $('#queue-readout').textContent = `${(payload.items || []).filter((item) => ['queued', 'running'].includes(item.status)).length} JOBS`;
     if (sync && payload.archive && !payload.archive.available) toast(payload.archive.error || 'MEGA indisponível para sincronização.', true);
-    else if (sync) {
+    else if (sync && !silent) {
       const synced = payload.synced || 0;
       const restored = payload.restored || 0;
       const prompt = payload.last_settings_synced ? ' último prompt atualizado.' : '';
       toast(`${synced} imagem(ns) reenviada(s), ${restored} registro(s) restaurado(s).${prompt}`);
     }
   } catch (error) { toast(error.message, true); }
+}
+
+function scheduleHistoryHeal(delay = 8000) {
+  if (state.historyHealed) return;
+  clearTimeout(state.historyHealTimer);
+  state.historyHealTimer = setTimeout(async () => {
+    state.historyHealTimer = null;
+    try {
+      const payload = await api('/api/bootstrap');
+      const available = payload.archive?.available;
+      if (!available) {
+        if (payload.archive?.error) log(payload.archive.error);
+        return;
+      }
+      await refreshHistory({sync: true, silent: true});
+      if ((state.historyItems || []).length > 0) {
+        state.historyHealed = true;
+        toast('Histórico restaurado do arquivo MEGA.');
+        return;
+      }
+      scheduleHistoryHeal();
+    } catch {
+      scheduleHistoryHeal();
+    }
+  }, delay);
 }
 
 function setTelemetry(job) {
@@ -770,6 +798,8 @@ async function bootstrap() {
     renderHistory(payload.jobs || []);
     // Releitura após o bootstrap cobre o caso em que a sessão MEGA acabou de conectar.
     await refreshHistory();
+    // Se o histórico vier vazio, segue tentando restaurar do MEGA em segundo plano.
+    scheduleHistoryHeal();
     const active = (payload.jobs || []).find((item) => ['queued', 'running'].includes(item.status));
     if (active) {
       state.activeJobId = active.id;
@@ -865,6 +895,7 @@ function bindEvents() {
     if (document.visibilityState !== 'visible') return;
     if (state.activeJobId && !state.pollTimer) scheduleJobPolling(0);
     if (!state.archiveReady && !state.archiveTimer) scheduleArchivePolling(0);
+    if (!state.historyHealed) scheduleHistoryHeal(0);
   });
   wireParameterReadouts();
   setEditLevel('medium', {silent: true});
