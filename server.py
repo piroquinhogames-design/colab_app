@@ -522,18 +522,26 @@ class MegaArchive:
                 raise RuntimeError(f"O cliente MEGA não confirmou o upload de {path.name}")
 
     def save_job(self, job: Job, image_path: Path | None) -> bool:
-        if not self.available:
-            return False
         metadata_path = OUTPUTS / f"{job.id}.json"
+        synced = False
+        if self.available:
+            try:
+                # O PNG é enviado primeiro; somente depois o manifesto confirma
+                # a sincronização. Isso mantém o retry local seguro e evita um
+                # terceiro upload do mesmo JSON.
+                if image_path and image_path.exists():
+                    self._upload(image_path)
+                synced = True
+            except Exception as exc:
+                self.error = f"Falha ao enviar ao MEGA: {str(exc)[:180]}"
+        job.mega_synced = synced
+        # O manifesto local é sempre persistido, mesmo sem MEGA, para que o
+        # histórico de imagens possa ser restaurado de forma automática e rápida
+        # na próxima recarga, sem depender da reconexão do arquivo remoto.
+        metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
+        if not synced:
+            return False
         try:
-            # O PNG é enviado primeiro; somente depois o manifesto confirma
-            # a sincronização. Isso mantém o retry local seguro e evita um
-            # terceiro upload do mesmo JSON.
-            job.mega_synced = False
-            if image_path and image_path.exists():
-                self._upload(image_path)
-            job.mega_synced = True
-            metadata_path.write_text(json.dumps(job.public(), ensure_ascii=False, indent=2), encoding="utf-8")
             self._upload(metadata_path)
             return True
         except Exception as exc:
@@ -836,28 +844,59 @@ class JobManager:
         self.worker = threading.Thread(target=self._run, name="generation-worker", daemon=True)
         self.worker.start()
 
+    @staticmethod
+    def _job_from_data(data: dict[str, Any]) -> Job:
+        params = data["params"]
+        loras = [LoRASelection(**item) for item in params.get("loras", [])]
+        completed = data.get("status", "completed") == "completed"
+        return Job(
+            id=data["id"], created_at=data["created_at"], status=data.get("status", "completed"),
+            progress=data.get("progress", 100),
+            download_progress=data.get("download_progress", 100 if completed else 0),
+            pipeline_progress=data.get("pipeline_progress", 100 if completed else 0),
+            progress_phase=data.get("progress_phase", "completed" if completed else "queued"),
+            params=GenerationParams(
+                prompt=params["prompt"], negative_prompt=params.get("negative_prompt", ""), seed=params["seed"],
+                steps=params["steps"], guidance=params["guidance"], width=params["width"], height=params["height"],
+                strength=params.get("strength", 0.65), mode=params["mode"],
+                model_id=get_model_spec(params.get("model")).get("id", DEFAULT_MODEL_ID), sampler=params.get("sampler", "euler_a"),
+                loras=loras, edit_level=params.get("edit_level", "medium"),
+            ), updated_at=data.get("updated_at"), completed_at=data.get("completed_at"),
+            filename=data.get("filename") or f"{data['id']}.png", mega_synced=bool(data.get("mega_synced", False)),
+            error=data.get("error"), vram_gb=data.get("vram_gb"),
+        )
+
     def restore(self) -> None:
+        """Restaura manifestos do MEGA sem sobrescrever registros já presentes
+        no cache local; marca como sincronizados os que já existiam localmente."""
         for data in self.archive.list_remote_metadata():
             try:
-                params = data["params"]
-                loras = [LoRASelection(**item) for item in params.get("loras", [])]
-                restored = Job(
-                    id=data["id"], created_at=data["created_at"], status=data.get("status", "completed"),
-                    progress=data.get("progress", 100),
-                    download_progress=data.get("download_progress", 100 if data.get("status", "completed") == "completed" else 0),
-                    pipeline_progress=data.get("pipeline_progress", 100 if data.get("status", "completed") == "completed" else 0),
-                    progress_phase=data.get("progress_phase", "completed" if data.get("status", "completed") == "completed" else "queued"),
-                    params=GenerationParams(
-                        prompt=params["prompt"], negative_prompt=params.get("negative_prompt", ""), seed=params["seed"],
-                        steps=params["steps"], guidance=params["guidance"], width=params["width"], height=params["height"],
-                        strength=params.get("strength", 0.65), mode=params["mode"],
-                        model_id=get_model_spec(params.get("model")).get("id", DEFAULT_MODEL_ID), sampler=params.get("sampler", "euler_a"),
-                        loras=loras, edit_level=params.get("edit_level", "medium"),
-                    ), updated_at=data.get("updated_at"), completed_at=data.get("completed_at"),
-                    filename=data.get("filename") or f"{data['id']}.png", mega_synced=True, error=data.get("error"), vram_gb=data.get("vram_gb"),
-                )
-                self.jobs[restored.id] = restored
+                job = self._job_from_data(data)
+                with self.lock:
+                    existing = self.jobs.get(job.id)
+                    if existing is not None:
+                        existing.mega_synced = True
+                        continue
+                    self.jobs[job.id] = job
             except (KeyError, TypeError, ValueError):
+                continue
+
+    def restore_local(self) -> None:
+        """Carrega os manifestos persistidos em OUTPUTS para reexibir o histórico
+        de imagens imediatamente na inicialização, sem esperar pela reconexão do MEGA."""
+        for path in sorted(OUTPUTS.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+            if path.name == LAST_SETTINGS_NAME:
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or not data.get("id"):
+                    continue
+                job = self._job_from_data(data)
+                with self.lock:
+                    if job.id in self.jobs:
+                        continue
+                    self.jobs[job.id] = job
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
                 continue
 
     def enqueue(self, params: GenerationParams) -> Job:
@@ -961,6 +1000,9 @@ class JobManager:
 archive = MegaArchive()
 engine = GeneratorEngine()
 manager = JobManager(archive, engine)
+# Restaura o histórico de imagens do disco na própria inicialização, para que o
+# /api/bootstrap já entregue a galeria sem esperar pela reconexão do MEGA.
+manager.restore_local()
 archive_ready = threading.Event()
 archive_restore_lock = threading.Lock()
 
