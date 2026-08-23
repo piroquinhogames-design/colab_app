@@ -18,6 +18,8 @@ const state = {
   archiveReady: false,
   historyHealTimer: null,
   historyHealed: false,
+  promptDirty: false,
+  promptRestored: false,
   historyItems: [],
   lowPower: false,
   previewJobId: null,
@@ -670,6 +672,12 @@ function scheduleHistoryHeal(delay = 8000) {
         if (payload.archive?.error) log(payload.archive.error);
         return;
       }
+      // Restaura o último prompt assim que disponível, sem sobrescrever o que o
+      // usuário já digitou manualmente.
+      if (payload.last_settings && !state.promptDirty && !state.promptRestored) {
+        restoreLastSettings(payload.last_settings);
+        state.promptRestored = true;
+      }
       await refreshHistory({sync: true, silent: true});
       if ((state.historyItems || []).length > 0) {
         state.historyHealed = true;
@@ -792,7 +800,7 @@ async function bootstrap() {
       log(archive.error || 'Arquivo MEGA indisponível; a galeria local continua disponível.');
     }
     renderModels(payload.models || [], payload.last_settings?.model || payload.model?.id || '');
-    restoreLastSettings(payload.last_settings);
+    if (restoreLastSettings(payload.last_settings)) state.promptRestored = true;
     updateModelProfile($('#model')?.value, {silent: true, applyDefaults: false});
     if (payload.last_settings_source === 'mega') log('Manifesto de preferências recuperado do MEGA.');
     renderHistory(payload.jobs || []);
@@ -847,6 +855,7 @@ function bindEvents() {
   on('#sampler', 'change', (event) => { if ($('#settings-sampler')) $('#settings-sampler').value = event.target.value; });
   on('#settings-sampler', 'change', (event) => { if ($('#sampler')) $('#sampler').value = event.target.value; });
   on('#generation-form', 'submit', submitJob);
+  on('#prompt', 'input', () => { state.promptDirty = true; });
   on('#open-catalog', 'click', () => { $('#catalog-dialog')?.showModal(); loadCatalog(); });
   on('#close-catalog', 'click', () => $('#catalog-dialog')?.close());
   on('#search-catalog', 'click', () => { state.catalogCursor = null; loadCatalog(); });
