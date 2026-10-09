@@ -386,7 +386,7 @@ class ComfyBackend:
                     "denoise": job.params.strength if job.params.mode == "img2img" else 1.0,
                 },
             },
-            "8": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["7", 0], "vae": ["3", 0], "tile_size": 512, "overlap": 64}},
+            "8": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["7", 0], "vae": ["3", 0], "tile_size": 512, "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}},
             "10": {
                 "class_type": "SaveImage",
                 "inputs": {"images": ["9" if use_memory_node else "8", 0], "filename_prefix": f"modellab_{job.id}"},

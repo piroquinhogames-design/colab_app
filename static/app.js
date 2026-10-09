@@ -340,6 +340,7 @@ function bindCatalogActions() {
       const model = JSON.parse(button.dataset.addLora);
       const picker = button.closest('.catalog-card').querySelector('[data-version-select]');
       const version = model.versions.find((candidate) => String(candidate.id) === String(picker.value)) || model.versions[0];
+      if (!String(version.base_model || '').toLowerCase().includes('anima')) { toast(`A versão ${version.name} usa ${version.base_model || 'base não informada'}. Escolha uma versão Anima.`, true); return; }
       addLora({version_id: Number(version.id), model_id: Number(model.model_id), name: model.name, version: version.name});
     } catch { toast('Não foi possível interpretar essa versão de LoRA.', true); }
   }));

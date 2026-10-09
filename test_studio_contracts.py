@@ -97,6 +97,29 @@ class StudioContracts(unittest.TestCase):
             response = self.client.post('/api/model-profile', json={'version_id': 123, 'civitai_model_id': 456}, headers=self.headers)
         self.assertEqual(response.status_code, 400)
 
+    def test_lora_error_identifies_resource_and_base(self):
+        data = version(kind='LORA', base='Illustrious')
+        with self.assertRaisesRegex(ValueError, 'LORA 123 .*Illustrious.*Anima'):
+            model_file(data, kind='LORA')
+
+    def test_catalog_search_keeps_only_compatible_versions(self):
+        response = unittest.mock.Mock()
+        response.json.return_value = {'items': [{'id': 456, 'name': 'Styles (Anima/Illustrious)', 'modelVersions': [
+            {'id': 222, 'name': 'Illustrious', 'baseModel': 'Illustrious', 'createdAt': '2026-10-09'},
+            {'id': 111, 'name': 'Anima', 'baseModel': 'Anima', 'createdAt': '2026-10-08'},
+        ]}], 'metadata': {}}
+        with patch.object(s.requests, 'get', return_value=response):
+            result = self.client.get('/api/catalog?query=Styles&family=anima&base_filter=compatible')
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual([v['id'] for v in result.json['items'][0]['versions']], [111])
+        response.json.return_value['items'][0]['modelVersions'] = [{'id': 222, 'baseModel': 'Illustrious'}]
+        with patch.object(s.requests, 'get', return_value=response):
+            result = self.client.get('/api/catalog?query=Styles&family=anima&base_filter=compatible')
+        self.assertEqual(result.json['items'], [])
+
+    def test_missing_base_does_not_use_multi_family_title(self):
+        self.assertFalse(s.version_matches_family({}, 'anima', 'Styles (Anima/Illustrious)'))
+
     def test_resource_type_family_format_and_hash_are_validated(self):
         for payload in (version(base='SDXL'), version(kind='LORA')):
             with self.assertRaises(ValueError): model_file(payload, kind='Checkpoint')
@@ -223,6 +246,16 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(workflow['7']['inputs']['model'], ['102', 0])
         self.assertEqual(workflow['12']['class_type'], 'LoadImage')
         self.assertEqual(workflow['8']['class_type'], 'VAEDecodeTiled')
+
+    def test_tiled_decode_supplies_all_required_inputs(self):
+        # Required inputs from nodes.py at the launcher's pinned ComfyUI commit.
+        required = {'samples', 'vae', 'tile_size', 'overlap', 'temporal_size', 'temporal_overlap'}
+        for mode in ('text2img', 'img2img'):
+            item = job(); item.params.mode = mode; item.comfy_source = 'source.png'
+            inputs = self.backend.build_workflow(item, {}, 'model.safetensors', [])['8']['inputs']
+            self.assertTrue(required.issubset(inputs))
+            self.assertEqual(inputs['temporal_size'], 64)
+            self.assertEqual(inputs['temporal_overlap'], 8)
 
     def test_upscale_preserves_latent_size_and_changes_output_size(self):
         item = job(); item.params.upscale = 2

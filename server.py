@@ -154,7 +154,7 @@ def civitai_base_for_family(family: str | None) -> str:
 
 def version_matches_family(version: dict[str, Any], family: str | None, model_name: str = "") -> bool:
     expected = civitai_base_for_family(family).lower()
-    actual = str(version.get("baseModel") or model_name or "").lower()
+    actual = str(version.get("baseModel") or "").lower()
     if not actual:
         return False
     if family == "anima":
@@ -1590,10 +1590,6 @@ def catalog():
                         item for item in candidate_versions
                         if _matches_date_range(item.get("publishedAt") or item.get("createdAt"), start_day, end_day)
                     ]
-                if not candidate_versions and ("query" in params or "ids" in params) and not (start_day or end_day):
-                    candidate_versions = [
-                        item for item in candidate_model.get("modelVersions", []) if isinstance(item, dict)
-                    ]
                 if candidate_versions:
                     count += 1
             return count
@@ -1625,12 +1621,6 @@ def catalog():
                 item for item in versions
                 if _matches_date_range(item.get("publishedAt") or item.get("createdAt"), start_day, end_day)
             ]
-        # Uma busca textual/por ID deve priorizar o resultado oficial solicitado.
-        # Se a API não trouxe baseModel ou usou um rótulo novo, não escondemos o
-        # modelo: exibimos as versões publicadas e sinalizamos a busca ampliada.
-        if not versions and ("query" in params or "ids" in params) and all_versions and not (start_day or end_day):
-            versions = all_versions
-            fallback_used = True
         if not versions:
             continue
         if sort == "Oldest":
