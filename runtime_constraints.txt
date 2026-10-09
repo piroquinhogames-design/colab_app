@@ -1,0 +1,8 @@
+# Compatible dependency groups. GPU packages are pinned dynamically to Colab's installed versions.
+pydantic==2.14.0
+pydantic-core==2.50.0
+pydantic-settings==2.15.0
+transformers==4.57.6
+tokenizers==0.22.2
+huggingface-hub==0.36.2
+safetensors==0.8.0

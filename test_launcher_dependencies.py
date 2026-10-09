@@ -1,30 +1,34 @@
-"""Regression checks for the no-deps Pydantic installation failure."""
 import subprocess
 import unittest
 from unittest.mock import patch
-
 import launch_colab
 
 
 class DependencySetupTests(unittest.TestCase):
-    def test_pydantic_group_is_resolved_after_no_deps_installs(self):
-        with patch.object(launch_colab.subprocess, 'run') as run, patch.object(launch_colab, 'validate_pydantic_runtime') as validate:
+    def test_gpu_versions_are_constrained_and_mega_is_isolated(self):
+        observed = []
+        def run(command, **kwargs):
+            observed.append(command)
+            if '-c' in command and 'pip' in command:
+                from pathlib import Path
+                constraints = Path(command[command.index('-c') + 1]).read_text()
+                self.assertIn('torch==2.11.0+cu130', constraints)
+                self.assertIn('pydantic-core==2.50.0', constraints)
+            return subprocess.CompletedProcess(command, 0, '', '')
+        with patch.object(launch_colab.importlib.metadata, 'version', return_value='2.11.0+cu130'), patch.object(launch_colab.importlib.metadata, 'distributions', return_value=[]), patch.object(launch_colab.subprocess, 'run', side_effect=run), patch.object(launch_colab, 'validate_pydantic_runtime'), patch.dict(launch_colab.os.environ, {'STUDIO_ROOT': '/tmp/modellab-launcher-tests'}):
             launch_colab.install_requirements()
-        commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(commands), 3)
-        self.assertTrue(all('--no-deps' in command for command in commands[:2]))
-        self.assertNotIn('--no-deps', commands[2])
-        self.assertIn('pydantic~=2.0', commands[2])
-        self.assertIn('pydantic-settings~=2.0', commands[2])
-        self.assertNotIn('pydantic-core', commands[2])
-        validate.assert_called_once_with()
+        self.assertNotIn('--no-deps', observed[0])
+        self.assertIn('--no-deps', observed[1])
+        self.assertIn('mega.py==1.0.8', observed[1])
 
-    def test_invalid_runtime_stops_before_server_start(self):
+    def test_invalid_pydantic_stops_before_server_start(self):
         result = subprocess.CompletedProcess([], 1, '', 'incompatible pydantic-core')
         with patch.object(launch_colab.subprocess, 'run', return_value=result):
             with self.assertRaisesRegex(RuntimeError, 'incompatible pydantic-core'):
                 launch_colab.validate_pydantic_runtime()
 
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_missing_torch_is_not_installed_implicitly(self):
+        with patch.object(launch_colab.importlib.metadata, 'version', side_effect=launch_colab.importlib.metadata.PackageNotFoundError), patch.object(launch_colab.subprocess, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'PyTorch ausente'):
+                launch_colab.install_requirements()
+            run.assert_not_called()

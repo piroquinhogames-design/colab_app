@@ -14,6 +14,7 @@ export function restoreLastSettings(settings, dependencies) {
     edit_level: 'edit-level',
     model: 'model',
     sampler: 'sampler',
+    upscale: 'upscale',
   };
   Object.entries(fieldIds).forEach(([settingKey, elementId]) => {
     const field = query(`#${elementId}`);

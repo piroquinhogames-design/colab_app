@@ -1,0 +1,16 @@
+{
+  "name": "modellab-studio",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "check": "node --check static/app.js && node --check static/settings.js && node --check static/login.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "jsdom": "30.1.2",
+    "vitest": "5.0.3"
+  }
+}

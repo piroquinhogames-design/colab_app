@@ -12,6 +12,7 @@ ocioso do allocator CUDA; ela não chama ``unload_all_models`` nem o endpoint
 from __future__ import annotations
 
 import gc
+import hashlib
 import io
 import json
 import os
@@ -27,6 +28,8 @@ from typing import Any, Callable
 
 import requests
 from PIL import Image
+from studio_storage import atomic_json, read_json
+from studio_downloads import ensure_download
 
 
 ProgressCallback = Callable[[int, float | None, int, str], None]
@@ -47,7 +50,10 @@ class ComfyBackend:
         self.session = requests.Session()
         self.client_id = str(uuid.uuid4())
         self.timeout = float(os.environ.get("COMFY_JOB_TIMEOUT", "3600"))
-        self.model_lock = threading.Lock()
+        self.cancel_event = threading.Event()
+        self.current_prompt_id = None
+        self.gpu_cache = ({}, 0.0)
+        self.identity_path = self.comfy_root / "backend_identity.json"
         self.memory_node_available: bool | None = None
         self.log_path = self.comfy_root / "logs" / "comfyui.log"
         self.log_handle = None
@@ -100,14 +106,20 @@ class ComfyBackend:
             # O parser do ComfyUI trata gpu-only/highvram como opções
             # mutuamente exclusivas. gpu-only é a política desejada: não
             # permitir offload de encoders/modelo para a RAM entre jobs.
-            "--gpu-only",
+            os.environ.get("COMFY_MEMORY_MODE", "--gpu-only"),
             # Evita manter resultados intermediários de nodes na RAM. O cache
             # interno de modelos do ComfyUI continua separado e residente.
             "--cache-none",
         ]
         extra = os.environ.get("COMFYUI_EXTRA_ARGS", "").strip()
+        if command[command.index("--fp16-intermediates") + 1] not in {"--gpu-only", "--normalvram", "--lowvram"}:
+            raise ValueError("COMFY_MEMORY_MODE deve ser --gpu-only, --normalvram ou --lowvram.")
         if extra:
-            command.extend(shlex.split(extra))
+            tokens = shlex.split(extra)
+            allowed = {"--disable-metadata", "--use-pytorch-cross-attention", "--dont-upcast-attention"}
+            if any(token not in allowed for token in tokens):
+                raise ValueError("COMFYUI_EXTRA_ARGS contém uma opção não permitida; use COMFY_MEMORY_MODE para memória.")
+            command.extend(tokens)
         return command
 
     def _open_log(self):
@@ -126,7 +138,11 @@ class ComfyBackend:
                 handle.seek(0, os.SEEK_END)
                 size = handle.tell()
                 handle.seek(max(0, size - limit), os.SEEK_SET)
-                return handle.read().strip()
+                tail = handle.read().strip()
+            for key in ("CIVITAI_TOKEN", "MEGA_PASSWORD", "STUDIO_PASSWORD", "STUDIO_SECRET"):
+                secret = os.environ.get(key, "")
+                if len(secret) >= 4: tail = tail.replace(secret, "[redigido]")
+            return tail
         except OSError:
             return ""
 
@@ -161,6 +177,10 @@ class ComfyBackend:
             self._ensure_directories()
             self._ensure_cleanup_node()
             if self._reachable():
+                identity = read_json(self.identity_path, {})
+                signature = hashlib.sha256(" ".join(self._command()).encode()).hexdigest()
+                if identity.get("signature") != signature or identity.get("pid") != (self.process.pid if self.process else None):
+                    raise RuntimeError("A porta ComfyUI está ocupada por outro processo. Pare a sessão anterior ou escolha COMFY_PORT.")
                 self.memory_node_available = self._memory_node_loaded()
                 return
             if not (self.comfy_dir / "main.py").exists():
@@ -171,6 +191,7 @@ class ComfyBackend:
                 self._wait_until_ready()
                 self.memory_node_available = self._memory_node_loaded()
                 return
+            if self.log_handle is not None: self.log_handle.close()
             self.log_handle = self._open_log()
             try:
                 self.process = subprocess.Popen(
@@ -187,10 +208,15 @@ class ComfyBackend:
                 raise
             try:
                 self._wait_until_ready()
+                response = self.session.get(f"{self.base_url}/object_info", timeout=10)
+                response.raise_for_status()
+                required = {"UNETLoader", "CLIPLoader", "VAELoader", "KSampler", "EmptySD3LatentImage", "VAEEncode", "VAEDecodeTiled", "LoadImage", "ImageScale", "SaveImage"}
+                if missing := required - set(response.json()):
+                    raise RuntimeError("Nodes obrigatórios ausentes: " + ", ".join(sorted(missing)))
+                atomic_json(self.identity_path, {"pid": self.process.pid, "signature": hashlib.sha256(" ".join(self._command()).encode()).hexdigest()})
                 self.memory_node_available = self._memory_node_loaded()
             except Exception:
-                if self.process.poll() is None:
-                    self.process.terminate()
+                self.close_process()
                 raise
 
     def _wait_until_ready(self) -> None:
@@ -218,66 +244,28 @@ class ComfyBackend:
         destination: Path,
         minimum_bytes: int,
         report: Callable[[int], None] | None = None,
+        **options,
     ) -> Path:
-        """Baixa um arquivo grande com retomada e sem carregá-lo na RAM."""
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists() and destination.stat().st_size >= minimum_bytes:
-            if report:
-                report(100)
-            return destination
-        temporary = destination.with_suffix(destination.suffix + ".part")
-        resume_at = temporary.stat().st_size if temporary.exists() else 0
-        headers = self._headers()
-        if resume_at:
-            headers["Range"] = f"bytes={resume_at}-"
-        with requests.get(url, headers=headers, stream=True, timeout=(20, 300)) as response:
-            response.raise_for_status()
-            append = bool(resume_at and response.status_code == 206)
-            if not append:
-                resume_at = 0
-            try:
-                content_length = int(response.headers.get("Content-Length", "0"))
-            except (TypeError, ValueError):
-                content_length = 0
-            total = content_length + resume_at if append and content_length else content_length
-            downloaded = resume_at
-            last = -1
-            with temporary.open("ab" if append else "wb") as handle:
-                for chunk in response.iter_content(4 * 1024 * 1024):
-                    if not chunk:
-                        continue
-                    handle.write(chunk)
-                    downloaded += len(chunk)
-                    if report and total:
-                        value = min(99, int(downloaded * 100 / total))
-                        if value != last:
-                            report(value)
-                            last = value
-        if temporary.stat().st_size < minimum_bytes:
-            raise RuntimeError(f"Download incompleto: {destination.name}. O arquivo parcial será retomado.")
-        temporary.replace(destination)
-        if report:
-            report(100)
-        return destination
+        return ensure_download(url, destination, minimum_bytes, report, **options)
 
     def ensure_anima_dependencies(self, report: ProgressCallback | None = None) -> None:
         """Baixa os arquivos compartilhados exigidos pelo workflow Anima."""
         self._ensure_directories()
         files = [
             (
-                "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+                "https://huggingface.co/circlestone-labs/Anima/resolve/f973fc41ec7545364ac9776c2440285f43ff2a30/split_files/text_encoders/qwen_3_06b_base.safetensors",
                 self.text_encoder_dir / "qwen_3_06b_base.safetensors",
                 100 * 1024 * 1024,
-                10,
+                10, "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba", 1192135096,
             ),
             (
-                "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+                "https://huggingface.co/circlestone-labs/Anima/resolve/f973fc41ec7545364ac9776c2440285f43ff2a30/split_files/vae/qwen_image_vae.safetensors",
                 self.vae_dir / "qwen_image_vae.safetensors",
                 100 * 1024 * 1024,
-                20,
+                20, "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f", 253806246,
             ),
         ]
-        for url, destination, minimum, phase_value in files:
+        for url, destination, minimum, phase_value, sha256, size in files:
             if report:
                 report(0, None, phase_value, "downloading_anima_components")
             self.ensure_file(
@@ -285,7 +273,41 @@ class ComfyBackend:
                 destination,
                 minimum,
                 lambda value, base=phase_value: report(value, None, base, "downloading_anima_components") if report else None,
+                cancelled=self.cancel_event.is_set, sha256=sha256, expected_bytes=size,
             )
+
+    def register_checkpoint(self, source: Path) -> str:
+        self._ensure_directories()
+        if source.resolve().parent == self.model_dir.resolve(): return source.name
+        # Use a unique registered name for custom paths, without copying gigabytes.
+        name = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:12] + "_" + source.name
+        destination = self.model_dir / name
+        if destination.is_symlink() and destination.resolve() != source.resolve(): destination.unlink()
+        if not destination.exists(): destination.symlink_to(source.resolve())
+        return name
+
+    def upload_source(self, path: Path) -> str:
+        with path.open("rb") as handle:
+            response = self.session.post(f"{self.base_url}/upload/image", files={"image": (path.name, handle)},
+                data={"type": "input", "overwrite": "true"}, timeout=60)
+        response.raise_for_status()
+        info = response.json()
+        return "/".join(filter(None, [info.get("subfolder"), info["name"]]))
+
+    def gpu_memory(self) -> dict[str, Any]:
+        cached, stamp = self.gpu_cache
+        if time.monotonic() - stamp < 2: return cached
+        try:
+            response = self.session.get(f"{self.base_url}/system_stats", timeout=1)
+            response.raise_for_status()
+            device = (response.json().get("devices") or [{}])[0]
+            total, free = device.get("vram_total", 0), device.get("vram_free", 0)
+            cached = {"used_gb": round((total - free) / 1024**3, 2), "free_gb": round(free / 1024**3, 2),
+                "total_gb": round(total / 1024**3, 2), "source": "ComfyUI system_stats"}
+        except (requests.RequestException, ValueError, IndexError):
+            cached = {}
+        self.gpu_cache = (cached, time.monotonic())
+        return cached
 
     def copy_lora(self, source: Path) -> str:
         self._ensure_directories()
@@ -346,7 +368,7 @@ class ComfyBackend:
                 "inputs": {"clip": ["2", 0], "text": negative},
             },
             "6": {
-                "class_type": "EmptyLatentImage",
+                "class_type": "EmptySD3LatentImage",
                 "inputs": {"width": job.params.width, "height": job.params.height, "batch_size": 1},
             },
             "7": {
@@ -361,22 +383,33 @@ class ComfyBackend:
                     "cfg": job.params.guidance,
                     "sampler_name": sampler_name,
                     "scheduler": scheduler,
-                    "denoise": 1.0,
+                    "denoise": job.params.strength if job.params.mode == "img2img" else 1.0,
                 },
             },
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+            "8": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["7", 0], "vae": ["3", 0], "tile_size": 512, "overlap": 64}},
             "10": {
                 "class_type": "SaveImage",
                 "inputs": {"images": ["9" if use_memory_node else "8", 0], "filename_prefix": f"modellab_{job.id}"},
             },
         }
+        if job.params.mode == "img2img":
+            workflow["6"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["13", 0], "vae": ["3", 0]}}
+            workflow["12"] = {"class_type": "LoadImage", "inputs": {"image": job.comfy_source}}
+            workflow["13"] = {"class_type": "ImageScale", "inputs": {"image": ["12", 0], "upscale_method": "lanczos",
+                "width": job.params.width, "height": job.params.height, "crop": "center"}}
         if use_memory_node:
             workflow["9"] = {
                 "class_type": "ModelLabMemoryCleanup",
                 "inputs": {"image": ["8", 0]},
             }
+        upscale = getattr(job.params, "upscale", 1.0)
+        if upscale > 1:
+            workflow["11"] = {"class_type": "ImageScale", "inputs": {"image": ["8", 0], "upscale_method": "lanczos",
+                "width": int(job.params.width * upscale), "height": int(job.params.height * upscale), "crop": "disabled"}}
+            if use_memory_node: workflow["9"]["inputs"]["image"] = ["11", 0]
+            else: workflow["10"]["inputs"]["images"] = ["11", 0]
         for index, (lora_name, weight) in enumerate(lora_names, start=1):
-            node_id = str(10 + index)
+            node_id = str(100 + index)
             workflow[node_id] = {
                 "class_type": "LoraLoaderModelOnly",
                 "inputs": {
@@ -400,49 +433,87 @@ class ComfyBackend:
         response.raise_for_status()
         return response.content
 
-    def submit_and_wait(self, workflow: dict[str, dict[str, Any]], update: ProgressCallback | None = None) -> Image.Image:
-        self.ensure_running()
-        response = self.session.post(
-            f"{self.base_url}/prompt",
-            json={"prompt": workflow, "client_id": self.client_id},
-            timeout=30,
-        )
+    def _cancel_prompt(self, prompt_id: str) -> None:
+        # Interrupt is global: verify that our own prompt is running first.
+        response = self.session.get(f"{self.base_url}/queue", timeout=5)
         response.raise_for_status()
-        payload = response.json()
-        if payload.get("error"):
-            raise RuntimeError(f"ComfyUI rejeitou o workflow: {payload['error']}")
-        prompt_id = payload.get("prompt_id")
-        if not prompt_id:
-            raise RuntimeError(f"Resposta inesperada do ComfyUI: {payload}")
-        deadline = time.monotonic() + self.timeout
-        last_progress = -1
-        while time.monotonic() < deadline:
+        data = response.json()
+        if any(item[1] == prompt_id for item in data.get("queue_running", [])):
+            self.session.post(f"{self.base_url}/interrupt", timeout=5).raise_for_status()
+        elif any(item[1] == prompt_id for item in data.get("queue_pending", [])):
+            self.session.post(f"{self.base_url}/queue", json={"delete": [prompt_id]}, timeout=5).raise_for_status()
+
+    def submit_and_wait(self, workflow, update=None, on_submitted=None) -> Image.Image:
+        self.ensure_running()
+        ws = None
+        try:
             try:
-                history_response = self.session.get(f"{self.base_url}/history/{prompt_id}", timeout=15)
-                history_response.raise_for_status()
-                history = history_response.json().get(prompt_id)
-            except requests.RequestException:
-                history = None
-            if history:
-                status = history.get("status") or {}
-                status_string = str(status.get("status_str", ""))
-                if status_string == "error" or status.get("completed") is False and status.get("messages"):
-                    raise RuntimeError(f"ComfyUI falhou ao executar o workflow: {status.get('messages', [])}")
-                outputs = history.get("outputs") or {}
-                for output in outputs.values():
-                    for image_info in output.get("images", []) if isinstance(output, dict) else []:
-                        raw = self._download_output(image_info)
-                        with Image.open(io.BytesIO(raw)) as image:
-                            return image.convert("RGB")
-                if status.get("completed") and not outputs:
-                    raise RuntimeError("ComfyUI concluiu o workflow sem produzir uma imagem.")
-            if update:
-                last_progress = min(98, last_progress + 1)
-                update(last_progress, None, 100, "generating")
-            if self.process is not None and self.process.poll() is not None:
-                raise RuntimeError("O backend do ComfyUI encerrou durante a geração.")
-            time.sleep(0.35)
-        raise TimeoutError(f"O workflow do ComfyUI excedeu {self.timeout:g}s.")
+                import websocket
+                ws = websocket.create_connection(f"ws://127.0.0.1:{self.port}/ws?clientId={self.client_id}", timeout=2)
+                ws.settimeout(0.2)
+            except Exception:
+                ws = None
+            response = self.session.post(f"{self.base_url}/prompt", json={"prompt": workflow, "client_id": self.client_id}, timeout=30)
+            if not response.ok:
+                raise RuntimeError(f"ComfyUI rejeitou o workflow: {response.text[:2000]}")
+            payload = response.json()
+            if payload.get("error") or not payload.get("prompt_id"):
+                raise RuntimeError(f"ComfyUI rejeitou o workflow: {payload}")
+            prompt_id = self.current_prompt_id = payload["prompt_id"]
+            if on_submitted: on_submitted(prompt_id)
+            deadline = time.monotonic() + self.timeout
+            next_history = 0.0
+            active_prompt = None
+            while time.monotonic() < deadline:
+                if self.cancel_event.is_set():
+                    try: self._cancel_prompt(prompt_id)
+                    except requests.RequestException:
+                        self.close_process()
+                    raise InterruptedError("Geração cancelada.")
+                if ws:
+                    try:
+                        message = ws.recv()
+                        if isinstance(message, str):
+                            event = json.loads(message); data = event.get("data", {})
+                            event_prompt = data.get("prompt_id")
+                            if event_prompt: active_prompt = event_prompt
+                            if (event_prompt or active_prompt) == prompt_id and update:
+                                if event.get("type") == "progress":
+                                    update(min(95, int(95 * data.get("value", 0) / max(data.get("max", 1), 1))), self.gpu_memory().get("used_gb"), 100, "generating")
+                                elif event.get("type") == "executing":
+                                    node = str(data.get("node"))
+                                    phase = "decoding" if node == "8" else "saving" if node == "10" else "loading_weights"
+                                    update(98 if node == "10" else 96 if node == "8" else 0, self.gpu_memory().get("used_gb"), 100, phase)
+                    except Exception as exc:
+                        # Socket timeouts are normal; reconnect fallback uses history.
+                        if exc.__class__.__name__ not in {"WebSocketTimeoutException", "TimeoutError"}:
+                            ws.close(); ws = None
+                elif update:
+                    update(0, self.gpu_memory().get("used_gb"), 100, "generating_indeterminate")
+                if time.monotonic() >= next_history:
+                    next_history = time.monotonic() + 1
+                    try:
+                        response = self.session.get(f"{self.base_url}/history/{prompt_id}", timeout=5)
+                        response.raise_for_status(); history = response.json().get(prompt_id)
+                    except requests.RequestException: history = None
+                    if history:
+                        status = history.get("status") or {}
+                        if status.get("status_str") == "error":
+                            raise RuntimeError(f"ComfyUI falhou: {status.get('messages', [])}")
+                        output = (history.get("outputs") or {}).get("10", {})
+                        for image_info in output.get("images", []):
+                            with Image.open(io.BytesIO(self._download_output(image_info))) as image:
+                                return image.convert("RGB")
+                        if status.get("completed"):
+                            raise RuntimeError("O workflow terminou sem a imagem final.")
+                if self.process is not None and self.process.poll() is not None:
+                    raise self._startup_error("ComfyUI encerrou durante a geração.")
+                if not ws: time.sleep(0.5)
+            self._cancel_prompt(prompt_id)
+            raise TimeoutError(f"Workflow cancelado após exceder {self.timeout:g}s.")
+        finally:
+            self.current_prompt_id = None
+            if ws: ws.close()
 
     def status(self) -> dict[str, Any]:
         """Retorna saúde/estado sem iniciar, limpar ou descarregar o backend."""
@@ -470,18 +541,22 @@ class ComfyBackend:
             payload["error"] = str(exc)[:180]
         return payload
 
+    def close_process(self) -> None:
+        if self.process is not None and self.process.poll() is None:
+            self.process.terminate()
+            try: self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill(); self.process.wait(timeout=5)
+        self.process = None
+        self.identity_path.unlink(missing_ok=True)
+        if self.log_handle is not None:
+            self.log_handle.close(); self.log_handle = None
+
     def close(self) -> None:
+        self.cancel_event.set()
         with self.start_lock:
-            if self.process is not None and self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-            self.process = None
-            if self.log_handle is not None:
-                self.log_handle.close()
-                self.log_handle = None
+            self.close_process()
+        self.session.close()
 
 
 __all__ = ["ComfyBackend"]

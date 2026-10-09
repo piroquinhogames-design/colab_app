@@ -1,0 +1,36 @@
+import { test, expect } from '@playwright/test';
+
+test('login, preset round trip, capability controls and keyboard focus', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByLabel('CHAVE DE ACESSO').fill('browser-test-password');
+  await page.getByRole('button', {name: /INICIAR SESSÃO/}).click();
+  await expect(page.locator('#active-model-name')).toHaveText('WAI-ANIMA V1.0');
+  await expect(page.getByRole('button', {name: 'IMG→IMG', exact: true})).toBeEnabled();
+  await page.locator('#prompt').fill('blue portrait browser test');
+  await page.locator('#open-model-settings').click();
+  await page.locator('#preset-name').fill('Browser preset');
+  await page.locator('#save-preset').click();
+  await expect(page.locator('#preset-select')).toContainText('Browser preset');
+  await page.locator('#close-model-settings').click();
+  await page.locator('#prompt').fill('changed');
+  await page.locator('#open-model-settings').click();
+  const id = await page.locator('#preset-select option').last().getAttribute('value');
+  await page.locator('#preset-select').selectOption(id);
+  await page.locator('#load-preset').click();
+  await page.locator('#close-model-settings').click();
+  await expect(page.locator('#prompt')).toHaveValue('blue portrait browser test');
+  await page.getByRole('button', {name: 'IMG→IMG', exact: true}).click();
+  await expect(page.locator('#upload-zone')).toBeVisible();
+  await expect(page.getByRole('button', {name: 'IMG→IMG', exact: true})).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', {name: 'TXT→IMG', exact: true}).click();
+  await page.locator('#generate').focus();
+  await expect(page.locator('#generate')).toBeFocused();
+  await page.screenshot({path: '/tmp/modellab-desktop.png', fullPage: true});
+  await page.setViewportSize({width: 390, height: 844});
+  await expect(page.locator('#generate')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({path: '/tmp/modellab-mobile.png', fullPage: true});
+  expect(errors).toEqual([]);
+});

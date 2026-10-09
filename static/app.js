@@ -24,6 +24,7 @@ const state = {
   lowPower: false,
   previewJobId: null,
   models: [],
+  presets: [], favorites: new Set(), comparison: new Set(), historyOffset: null, submitKey: null,
   limits: {maxLoras: 8},
 };
 
@@ -88,7 +89,7 @@ async function api(path, options = {}) {
   if (state.csrf && !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) {
     headers.set('X-CSRF-Token', state.csrf);
   }
-  const response = await fetch(path, {...options, headers});
+  const response = await fetch(path, {...options, headers, signal: options.signal || AbortSignal.timeout(30000)});
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401) {
     window.location.assign('/');
@@ -191,6 +192,8 @@ function updateModelProfile(modelId, {silent = false, applyDefaults = true} = {}
   if ($('#settings-engine-status')) $('#settings-engine-status').textContent = `ENGINE // ${String(model.engine || '--').toUpperCase()} // ${model.ready === false ? 'PENDENTE' : 'READY'}`;
   if ($('#catalog-family-label')) $('#catalog-family-label').textContent = family;
   if ($('#prompt-family-label')) $('#prompt-family-label').textContent = family;
+  $$('.mode').forEach(button => { button.disabled = model.ready === false || (button.dataset.mode === 'img2img' && !model.capabilities?.img2img); });
+  if (!model.capabilities?.img2img && state.mode === 'img2img') setMode('text2img', {silent: true});
   if (!silent) log(`Perfil ${model.name || model.id} selecionado; defaults adaptativos e lojas ${family} aplicados.`);
 }
 
@@ -199,7 +202,7 @@ function renderModels(models, selectedId = '') {
   const select = $('#model');
   if (!select) return;
   if (!state.models.length) {
-    state.models = [{id: 'prefect-pony-xl-v6', name: 'Prefect Pony XL V6', family: 'pony', base: 'Pony', engine: 'sdxl', ready: true, cached: false, defaults: {steps: 30, guidance: 5.5, strength: .65, sampler: 'euler_a'}}];
+    state.models = [{id: 'wai-anima', name: 'WAI-ANIMA', family: 'anima', ready: false, defaults: {}}];
   }
   const options = state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)} · ${escapeHtml(String(model.family || 'sdxl').toUpperCase())}</option>`).join('');
   select.innerHTML = options;
@@ -212,7 +215,7 @@ function renderModels(models, selectedId = '') {
 
 function setMode(mode, {silent = false} = {}) {
   state.mode = mode;
-  $$('.mode').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
+  $$('.mode').forEach((button) => { button.classList.toggle('active', button.dataset.mode === mode); button.setAttribute('aria-pressed', String(button.dataset.mode === mode)); });
   $('#upload-zone')?.classList.toggle('hidden', mode !== 'img2img');
   $('#edit-control')?.classList.toggle('hidden', mode !== 'img2img');
   $('.strength-control')?.classList.toggle('hidden', mode !== 'img2img');
@@ -225,7 +228,7 @@ function setEditLevel(level, {silent = false} = {}) {
   state.editLevel = selected;
   const hidden = $('#edit-level');
   if (hidden) hidden.value = selected;
-  $$('.edit-level').forEach((button) => button.classList.toggle('active', button.dataset.editLevel === selected));
+  $$('.edit-level').forEach((button) => { button.classList.toggle('active', button.dataset.editLevel === selected); button.setAttribute('aria-pressed', String(button.dataset.editLevel === selected)); });
   const readout = $('#edit-level-readout');
   if (readout) readout.textContent = preset.label;
   if (!silent && $('#strength')) {
@@ -247,6 +250,7 @@ function appendTag(targetId, tag) {
   const field = $(`#${targetId}`);
   if (!field) return;
   field.value = field.value.trim() ? `${field.value.trim()}, ${tag}` : tag;
+  state.promptDirty = true;
   field.focus();
 }
 
@@ -379,7 +383,9 @@ async function useModelFromStore(item) {
   } catch (error) { toast(error.message, true); }
 }
 
+let modelStoreRequest = 0;
 async function loadModelStore({append = false} = {}) {
+  const requestNumber = ++modelStoreRequest;
   const button = $('#search-model-store');
   if (!button) return;
   button.disabled = true;
@@ -390,6 +396,7 @@ async function loadModelStore({append = false} = {}) {
   if (append && state.modelStoreCursor) params.set('cursor', state.modelStoreCursor);
   try {
     const payload = await api(`/api/model-catalog?${params}`);
+    if (requestNumber !== modelStoreRequest) return;
     state.modelStoreCursor = payload.next_cursor || null;
     state.modelStoreItems = append ? [...state.modelStoreItems, ...(payload.items || [])] : (payload.items || []);
     renderModelStore(state.modelStoreItems);
@@ -401,12 +408,14 @@ async function loadModelStore({append = false} = {}) {
   finally { button.disabled = false; }
 }
 
+let catalogRequest = 0;
 async function loadCatalog({append = false} = {}) {
+  const requestNumber = ++catalogRequest;
   const button = $('#search-catalog');
   if (!button) return;
   button.disabled = true;
   const params = new URLSearchParams({
-    query: valueOf('#catalog-query').trim(), tag: valueOf('#catalog-tag').trim(), family: state.models.find((model) => model.id === valueOf('#model'))?.family || 'pony',
+    query: valueOf('#catalog-query').trim(), tag: valueOf('#catalog-tag').trim(), family: state.models.find((model) => model.id === valueOf('#model'))?.family || 'anima',
     sort: valueOf('#catalog-sort', 'Most Downloaded'), period: valueOf('#catalog-period', 'AllTime'), base_filter: valueOf('#catalog-base-filter', 'compatible'),
     date_from: valueOf('#catalog-date-from'), date_to: valueOf('#catalog-date-to'),
     limit: '24', include_adult: checkedOf('#catalog-adult') ? 'true' : 'false',
@@ -414,6 +423,7 @@ async function loadCatalog({append = false} = {}) {
   if (append && state.catalogCursor) params.set('cursor', state.catalogCursor);
   try {
     const payload = await api(`/api/catalog?${params}`);
+    if (requestNumber !== catalogRequest) return;
     state.catalogCursor = payload.next_cursor || null;
     if (append) {
       const current = $('#catalog-grid').innerHTML;
@@ -497,7 +507,9 @@ function shufflePromptItems(items) {
   return shuffled;
 }
 
+let promptStoreRequest = 0;
 async function loadPromptStore({append = false, random = false} = {}) {
+  const requestNumber = ++promptStoreRequest;
   const button = $('#search-prompt-store');
   if (!button) return;
   button.disabled = true;
@@ -508,11 +520,12 @@ async function loadPromptStore({append = false, random = false} = {}) {
     date_from: valueOf('#prompt-store-date-from'), date_to: valueOf('#prompt-store-date-to'),
     limit: '24', include_adult: checkedOf('#prompt-store-adult') ? 'true' : 'false',
     filters: [...state.promptFilters].join(','),
-    family: state.models.find((model) => model.id === valueOf('#model'))?.family || 'pony',
+    family: state.models.find((model) => model.id === valueOf('#model'))?.family || 'anima',
   });
   if (append && state.promptStoreCursor) params.set('cursor', state.promptStoreCursor);
   try {
     const payload = await api(`/api/prompt-store?${params}`);
+    if (requestNumber !== promptStoreRequest) return;
     const randomMode = valueOf('#prompt-store-sort', 'Most Reactions') === 'Random';
     const incomingItems = randomMode ? shufflePromptItems(payload.items || []) : (payload.items || []);
     state.promptStoreCursor = payload.next_cursor || null;
@@ -537,9 +550,9 @@ function imageCard(job) {
   const settings = `${mode}${editLevel} // ${job.params?.width ?? '--'}×${job.params?.height ?? '--'} // ${job.params?.steps ?? '--'} STEPS // CFG ${job.params?.guidance ?? '--'}${strength}${sampler}`;
   const jobId = encodeURIComponent(job.id);
   return `<article class="history-card" data-history-id="${jobId}">
-    <img loading="lazy" decoding="async" data-fullscreen="${jobId}" src="/api/history/${jobId}/image" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
+    <img loading="lazy" decoding="async" data-fullscreen="${jobId}" src="/api/history/${jobId}/thumbnail" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
     <div class="history-overlay"><p title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="history-actions-row"><button class="history-icon-button" data-fullscreen="${jobId}" type="button" title="Tela cheia" aria-label="Abrir imagem em tela cheia">⛶</button><button class="history-icon-button remix" data-remix-history="${jobId}" type="button" title="Remixar materiais" aria-label="Remixar esta imagem">⟳</button><button class="history-icon-button delete" data-delete-history="${jobId}" type="button" title="Excluir do histórico e do MEGA" aria-label="Excluir esta imagem">⌫</button><a class="download-link" href="/api/history/${jobId}/image?download=1" title="Baixar PNG">↓</a></div></div>
-    <div class="history-meta"><strong>SEED ${escapeHtml(job.params?.seed)} // ${escapeHtml(model)}</strong><span>${escapeHtml(settings)}</span><span>${escapeHtml(loras)} // ${escapeHtml(formatDate(job.completed_at || job.created_at))}</span></div>
+    <div class="history-extra"><label><input type="checkbox" data-compare="${jobId}" ${state.comparison.has(job.id) ? 'checked' : ''} /> Comparar</label><button type="button" class="text-button" data-favorite="${jobId}" aria-pressed="${state.favorites.has(job.id)}">${state.favorites.has(job.id) ? '★' : '☆'} Favorito</button><button type="button" class="text-button" data-edit-image="${jobId}">EDITAR IMAGEM</button><a href="/api/history/${jobId}/export">BAIXAR PACK</a><span>${job.mega_synced ? 'MEGA sincronizado' : escapeHtml(job.sync_status === 'uploading' ? 'Enviando ao MEGA' : 'MEGA pendente')}</span>${!job.mega_synced ? `<button type="button" data-retry-sync="${jobId}">REENVIAR</button>` : ''}</div><div class="history-meta"><strong>SEED ${escapeHtml(job.params?.seed)} // ${escapeHtml(model)}</strong><span>${escapeHtml(settings)}</span><span>${escapeHtml(loras)} // ${escapeHtml(formatDate(job.completed_at || job.created_at))}</span></div>
   </article>`;
 }
 
@@ -573,22 +586,16 @@ function openImagePreview(jobId) {
 async function remixHistoryJob(jobId) {
   const job = historyJob(jobId);
   if (!job) return;
+  if (!state.models.some(model => model.id === job.params?.model && model.ready)) {
+    toast('O checkpoint original não está disponível. Adicione esse perfil antes de remixar.', true); return;
+  }
   try {
-    const mode = 'img2img';
-      const response = await fetch(`/api/history/${encodeURIComponent(job.id)}/image`);
-      if (!response.ok) throw new Error('A imagem arquivada não está disponível para remix.');
-      const blob = await response.blob();
-      const file = new File([blob], `remix-${job.id}.png`, {type: blob.type || 'image/png'});
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      const source = $('#source-image');
-      source.files = transfer.files;
-      $('#upload-name').textContent = `REMIX // ${file.name}`;
+    const mode = 'text2img';
     restoreLastSettings({...job.params, mode, seed: -1, edit_level: job.params?.edit_level || 'medium'});
     setMode(mode);
     $('#generation-form').scrollIntoView({behavior: 'smooth', block: 'start'});
     if ($('#image-dialog').open) $('#image-dialog').close();
-    toast('Materiais carregados: prompt, LoRAs, parâmetros e imagem-base. Seed definida como aleatória.');
+    state.promptDirty = true; toast('Prompt, LoRAs e parâmetros reutilizados. Seed aleatória. Para editar a imagem, escolha IMG→IMG.');
     log(`Remix preparado a partir do job ${String(job.id).slice(0, 8)}.`);
   } catch (error) { toast(error.message, true); }
 }
@@ -635,7 +642,7 @@ async function refreshArchiveState() {
     const wasReady = state.archiveReady;
     state.archiveReady = true;
     if (payload.archive?.available && !wasReady) {
-      restoreLastSettings(payload.last_settings);
+      if (!state.promptDirty && !state.promptRestored) { restoreLastSettings(payload.last_settings); state.promptRestored = true; }
       await refreshHistory({sync: true});
       log('Conexão MEGA concluída; histórico, imagens pendentes e último prompt atualizados automaticamente.');
       scheduleHistoryHeal();
@@ -645,10 +652,12 @@ async function refreshArchiveState() {
   }
 }
 
-async function refreshHistory({sync = false, silent = false} = {}) {
+async function refreshHistory({sync = false, silent = false, append = false} = {}) {
   try {
-    const payload = await api(sync ? '/api/history/sync' : '/api/history', sync ? {method: 'POST'} : {});
-    renderHistory(payload.items || []);
+    const payload = await api(sync ? '/api/history/sync' : `/api/history?limit=40&offset=${append ? state.historyOffset || 0 : 0}`, sync ? {method: 'POST'} : {});
+    state.historyOffset = payload.next_offset ?? null;
+    if ($('#more-history')) $('#more-history').hidden = state.historyOffset === null;
+    renderHistory(append ? [...state.historyItems, ...(payload.items || [])] : payload.items || []);
     $('#queue-readout').textContent = `${(payload.items || []).filter((item) => ['queued', 'running'].includes(item.status)).length} JOBS`;
     if (sync && payload.archive && !payload.archive.available) toast(payload.archive.error || 'MEGA indisponível para sincronização.', true);
     else if (sync && !silent) {
@@ -670,18 +679,19 @@ function scheduleHistoryHeal(delay = 8000) {
       const available = payload.archive?.available;
       if (!available) {
         if (payload.archive?.error) log(payload.archive.error);
-        return;
+        scheduleHistoryHeal(15000); return;
       }
       // Restaura o último prompt assim que disponível, sem sobrescrever o que o
       // usuário já digitou manualmente.
       if (payload.last_settings && !state.promptDirty && !state.promptRestored) {
-        restoreLastSettings(payload.last_settings);
+        if (!state.promptDirty && !state.promptRestored) { restoreLastSettings(payload.last_settings); state.promptRestored = true; }
         state.promptRestored = true;
       }
       await refreshHistory({sync: true, silent: true});
       if ((state.historyItems || []).length > 0) {
         state.historyHealed = true;
-        toast('Histórico restaurado do arquivo MEGA.');
+        $('#history-status').textContent = state.historyItems.some(job => job.status === 'completed' && !job.mega_synced) ? 'Há imagens locais com envio ao MEGA pendente.' : 'Histórico atualizado.';
+        if (state.historyItems.some(job => job.status === 'completed' && !job.mega_synced)) { state.historyHealed = false; scheduleHistoryHeal(15000); }
         return;
       }
       scheduleHistoryHeal();
@@ -713,6 +723,8 @@ function setTelemetry(job) {
     starting: 'Iniciando o carregamento do modelo.',
     checking_model: 'Verificando o cache local do modelo.',
     downloading_model: 'Baixando o checkpoint do modelo.',
+    backend_ready: 'Backend disponível; os pesos serão carregados pelo workflow.',
+    loading_weights: 'Carregando pesos do modelo.', decoding: 'Decodificando a imagem em tiles.', saving: 'Salvando resultado.', generating_indeterminate: 'Geração em andamento; reconectando a telemetria.',
     loading_pipeline: 'Carregando os componentes da pipeline.',
     configuring_pipeline: 'Configurando memória e scheduler.',
     preparing_img2img: 'Preparando a pipeline img2img.',
@@ -723,13 +735,14 @@ function setTelemetry(job) {
     failed: 'Falha durante a geração.',
   };
   $('#progress-bar').style.width = `${mainProgress}%`;
-  $('#progress-number').textContent = `${mainProgress}%`;
+  $('#progress-number').textContent = job?.progress_phase === 'generating_indeterminate' ? 'EM ANDAMENTO' : `${mainProgress}%`;
   $('#vram-readout').textContent = `VRAM // ${job?.vram_gb ? `${job.vram_gb} GB` : '--'}`;
-  const labels = {queued:'NO BUFFER', running:'SINAL EM PROCESSAMENTO', completed:'SINAL ARQUIVADO', failed:'FALHA DE SINAL', idle:'EM ESPERA'};
+  const labels = {cancelled:'CANCELADO', interrupted:'SESSÃO INTERROMPIDA', queued:'NO BUFFER', running:'SINAL EM PROCESSAMENTO', completed:'SINAL ARQUIVADO', failed:'FALHA DE SINAL', idle:'EM ESPERA'};
   $('#telemetry-title').textContent = labels[status] || 'EM ESPERA';
   $('#telemetry-subtitle').textContent = job?.error || phaseLabels[job?.progress_phase] || (status === 'running' ? `Job ${job.id.slice(0, 8)} em execução.` : 'Sem job ativo no buffer.');
   $('#job-state').textContent = labels[status] || 'PRONTO PARA INICIAR';
   $('#generate').disabled = ['queued', 'running'].includes(status);
+  if ($('#cancel-job')) $('#cancel-job').disabled = !['queued', 'running'].includes(status);
 }
 
 async function pollJob() {
@@ -737,13 +750,16 @@ async function pollJob() {
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(state.activeJobId)}`);
     setTelemetry(job);
-    if (['completed', 'failed'].includes(job.status)) {
+    if (['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status)) {
       stopJobPolling();
       state.activeJobId = null;
       await refreshHistory();
+      const nextJob = state.historyItems.find(item => ['queued', 'running'].includes(item.status));
+      if (nextJob) { state.activeJobId = nextJob.id; scheduleJobPolling(0); }
       if (job.status === 'completed') {
         log(`Render ${job.id.slice(0, 8)} concluído. Arquivo MEGA: ${job.mega_synced ? 'sincronizado' : 'pendente'}.`);
-        toast(job.mega_synced ? 'Imagem renderizada e enviada ao MEGA.' : 'Imagem renderizada; sincronização MEGA pendente.', !job.mega_synced);
+        toast(job.mega_synced ? 'Imagem renderizada e enviada ao MEGA.' : 'Imagem renderizada; sincronização MEGA pendente.', false);
+      } else if (job.status === 'cancelled') { toast('Geração cancelada.');
       } else {
         log(`Falha no render: ${job.error}`);
         toast(job.error || 'A geração falhou.', true);
@@ -766,14 +782,16 @@ async function submitJob(event) {
     mode: state.mode, seed: Number($('#seed').value), steps: Number($('#steps').value),
     guidance: Number($('#guidance').value), width: Number($('#width').value), height: Number($('#height').value),
     strength: Number($('#strength').value), edit_level: state.editLevel, loras: state.selectedLoras,
-    model: $('#model').value, sampler: $('#sampler').value,
+    model: $('#model').value, sampler: $('#sampler').value, upscale: Number(valueOf('#upscale', '1')),
   };
   const data = new FormData();
   data.append('payload', JSON.stringify(payload));
   if (state.mode === 'img2img') data.append('image', $('#source-image').files[0]);
   $('#generate').disabled = true;
   try {
-    const job = await api('/api/jobs', {method: 'POST', body: data});
+    state.submitKey ||= crypto.randomUUID();
+    const job = await api('/api/jobs', {method: 'POST', headers: {'Idempotency-Key': state.submitKey}, body: data});
+    state.submitKey = null;
     state.activeJobId = job.id;
     setTelemetry(job);
     if (!job.preferences_persisted) log('Preferências enfileiradas localmente; arquivo MEGA indisponível para salvar o último prompt.');
@@ -788,6 +806,7 @@ async function bootstrap() {
   try {
     const payload = await api('/api/bootstrap');
     state.csrf = payload.csrf;
+    state.presets = payload.presets || []; state.favorites = new Set(payload.favorites || []); renderPresets();
     state.limits = {...state.limits, ...(payload.limits || {})};
     setNode(true);
     const archive = payload.archive || {available: false, ready: false};
@@ -844,6 +863,14 @@ function openModelStore() {
   loadModelStore();
 }
 
+function currentSettings() {
+  return {upscale: Number(valueOf('#upscale', '1')), prompt: valueOf('#prompt'), negative_prompt: valueOf('#negative-prompt'), model: valueOf('#model'), sampler: valueOf('#sampler'), mode: state.mode, seed: Number(valueOf('#seed')), steps: Number(valueOf('#steps')), guidance: Number(valueOf('#guidance')), width: Number(valueOf('#width')), height: Number(valueOf('#height')), strength: Number(valueOf('#strength')), edit_level: state.editLevel, loras: state.selectedLoras};
+}
+function renderPresets() {
+  const select = $('#preset-select'); if (!select) return;
+  select.innerHTML = '<option value="">Selecione um preset</option>' + state.presets.map(preset => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</option>`).join('');
+}
+
 function bindEvents() {
   state.lowPower = detectLowPowerMode();
   $$('.mode').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
@@ -855,7 +882,8 @@ function bindEvents() {
   on('#sampler', 'change', (event) => { if ($('#settings-sampler')) $('#settings-sampler').value = event.target.value; });
   on('#settings-sampler', 'change', (event) => { if ($('#sampler')) $('#sampler').value = event.target.value; });
   on('#generation-form', 'submit', submitJob);
-  on('#prompt', 'input', () => { state.promptDirty = true; });
+  on('#generation-form', 'input', () => { state.promptDirty = true; state.submitKey = null; });
+  on('#generation-form', 'change', () => { state.promptDirty = true; state.submitKey = null; });
   on('#open-catalog', 'click', () => { $('#catalog-dialog')?.showModal(); loadCatalog(); });
   on('#close-catalog', 'click', () => $('#catalog-dialog')?.close());
   on('#search-catalog', 'click', () => { state.catalogCursor = null; loadCatalog(); });
@@ -891,7 +919,7 @@ function bindEvents() {
   $$('.prompt-filter-chip').forEach((button) => button.addEventListener('click', () => {
     const term = button.dataset.promptFilter;
     if (state.promptFilters.has(term)) state.promptFilters.delete(term); else state.promptFilters.add(term);
-    button.classList.toggle('active', state.promptFilters.has(term));
+    button.classList.toggle('active', state.promptFilters.has(term)); button.setAttribute('aria-pressed', String(state.promptFilters.has(term)));
     state.promptStoreCursor = null;
     loadPromptStore();
   }));
@@ -906,6 +934,27 @@ function bindEvents() {
     if (!state.archiveReady && !state.archiveTimer) scheduleArchivePolling(0);
     if (!state.historyHealed) scheduleHistoryHeal(0);
   });
+  on('#cancel-job', 'click', async () => { if (!state.activeJobId) return; try { await api(`/api/jobs/${state.activeJobId}/cancel`, {method: 'POST'}); toast('Cancelamento solicitado.'); } catch (error) { toast(error.message, true); } });
+  on('#more-history', 'click', () => refreshHistory({append: true}));
+  on('#only-favorites', 'change', () => renderHistory(state.historyItems));
+  on('#save-preset', 'click', async () => { try { const preset = await api('/api/presets', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: valueOf('#preset-name'), settings: currentSettings()})}); state.presets.push(preset); renderPresets(); toast('Preset salvo.'); } catch (error) { toast(error.message, true); } });
+  on('#load-preset', 'click', () => { const preset = state.presets.find(p => p.id === valueOf('#preset-select')); if (preset && !state.models.some(model => model.id === preset.settings.model)) { toast('O modelo deste preset precisa ser registrado novamente.', true); return; } if (preset) { restoreLastSettings(preset.settings); state.promptDirty = true; updateModelProfile(preset.settings.model, {silent: true, applyDefaults: false}); } });
+  on('#delete-preset', 'click', async () => { const id = valueOf('#preset-select'); if (!id) return; try { await api(`/api/presets/${id}`, {method: 'DELETE'}); state.presets = state.presets.filter(p => p.id !== id); renderPresets(); } catch (error) { toast(error.message, true); } });
+  on('#clear-model-cache', 'click', async () => { try { const result = await api('/api/models/cache', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: valueOf('#model')})}); toast(`Cache removido: ${result.freed_mb} MB. O modelo será baixado no próximo uso.`); } catch (error) { toast(error.message, true); } });
+  on('#diagnose', 'click', async () => { try { $('#diagnostic-result').textContent = JSON.stringify(await api('/api/diagnostics'), null, 2); } catch (error) { toast(error.message, true); } });
+  on('#generate-batch', 'click', async () => { try { const result = await api('/api/jobs/batch', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({count: Number(valueOf('#batch-count')), settings: currentSettings()})}); state.activeJobId = result.items[0].id; scheduleJobPolling(0); toast(`${result.items.length} variações adicionadas à fila.`); } catch (error) { toast(error.message, true); } });
+  on('#history-grid', 'click', async event => {
+    const target = event.target.closest('[data-favorite],[data-retry-sync],[data-edit-image]'); if (!target) return;
+    try {
+      if (target.dataset.favorite) { const id = decodeURIComponent(target.dataset.favorite); const result = await api(`/api/history/${encodeURIComponent(id)}/favorite`, {method: 'POST'}); if (result.favorite) state.favorites.add(id); else state.favorites.delete(id); renderHistory(state.historyItems); }
+      if (target.dataset.retrySync) { await api(`/api/history/${target.dataset.retrySync}/retry-sync`, {method: 'POST'}); toast('Reenvio agendado.'); }
+      if (target.dataset.editImage) { const job = historyJob(decodeURIComponent(target.dataset.editImage)); await remixHistoryJob(job.id); if (state.models.some(model => model.id === job.params.model && model.capabilities?.img2img)) { const response = await fetch(`/api/history/${encodeURIComponent(job.id)}/image`, {signal: AbortSignal.timeout(30000)}); if (!response.ok) throw new Error('Imagem indisponível.'); const blob = await response.blob(); const transfer = new DataTransfer(); transfer.items.add(new File([blob], `edit-${job.id}.png`, {type: 'image/png'})); $('#source-image').files = transfer.files; $('#upload-name').textContent = `Editar ${job.id.slice(0, 8)}`; setMode('img2img'); } }
+    } catch (error) { toast(error.message, true); }
+  });
+  on('#history-grid', 'change', event => { if (!event.target.dataset.compare) return; const id = decodeURIComponent(event.target.dataset.compare); if (event.target.checked) { if (state.comparison.size >= 2) { event.target.checked = false; toast('Selecione duas imagens para comparar.'); return; } state.comparison.add(id); } else state.comparison.delete(id); $('#compare-selected').disabled = state.comparison.size !== 2; });
+  on('#compare-selected', 'click', () => { $('#comparison-images').innerHTML = [...state.comparison].map(id => { const job = historyJob(id); return `<figure><img src="/api/history/${encodeURIComponent(id)}/image" alt="Resultado com seed ${escapeHtml(job?.params.seed)}" /><figcaption>${escapeHtml(job?.params.model)} · seed ${escapeHtml(job?.params.seed)}<br>${escapeHtml(job?.params.prompt)}</figcaption></figure>`; }).join(''); $('#compare-dialog').showModal(); });
+  on('#close-compare', 'click', () => $('#compare-dialog').close());
+  window.addEventListener('beforeunload', event => { if (state.activeJobId || state.historyItems.some(job => job.status === 'completed' && !job.mega_synced)) { event.preventDefault(); event.returnValue = ''; } });
   wireParameterReadouts();
   setEditLevel('medium', {silent: true});
   setMode('text2img');

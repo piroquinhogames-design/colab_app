@@ -32,19 +32,20 @@ job = SimpleNamespace(
         guidance=5.0,
         width=1024,
         height=1024,
-        sampler='euler_a',
+        sampler='euler_a', mode='text2img', strength=0.65,
     ),
 )
 spec = {'defaults': {}, 'id': 'nova-exanime-am'}
 workflow = backend.build_workflow(job, spec, 'novaExanimeAM_v10.safetensors', [('style.safetensors', 0.7), ('detail.safetensors', 0.4)])
 assert workflow['1']['class_type'] == 'UNETLoader'
 assert workflow['1']['inputs']['unet_name'] == 'novaExanimeAM_v10.safetensors'
+assert workflow['6']['class_type'] == 'EmptySD3LatentImage'
 assert workflow['2']['inputs']['clip_name'] == 'qwen_3_06b_base.safetensors'
 assert workflow['2']['inputs']['type'] == 'qwen_image'
 assert workflow['3']['inputs']['vae_name'] == 'qwen_image_vae.safetensors'
-assert workflow['7']['inputs']['model'] == ['12', 0]
-assert workflow['11']['inputs']['model'] == ['1', 0]
-assert workflow['12']['inputs']['model'] == ['11', 0]
+assert workflow['7']['inputs']['model'] == ['102', 0]
+assert workflow['101']['inputs']['model'] == ['1', 0]
+assert workflow['102']['inputs']['model'] == ['101', 0]
 assert workflow['9']['class_type'] == 'ModelLabMemoryCleanup'
 assert workflow['10']['inputs']['images'] == ['9', 0]
 backend.memory_node_available = False

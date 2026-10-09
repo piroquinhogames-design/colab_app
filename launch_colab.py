@@ -7,6 +7,9 @@ Interrompa a célula para encerrar servidor e túnel.
 from __future__ import annotations
 
 import getpass
+import json
+import signal
+import tempfile
 import importlib.metadata
 import os
 import re
@@ -40,25 +43,31 @@ def ask_secret(name: str, prompt: str, required: bool = True) -> None:
 
 
 def install_requirements() -> None:
-    print("[setup] Atualizando as dependências diretas do estúdio sem tocar no PyTorch/CUDA…")
-    subprocess.run([
-        sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--no-deps",
-        "-r", str(APP_DIR / "requirements.txt"),
-    ], check=True)
-    print("[setup] Instalando dependências do ComfyUI sem substituir torch, torchvision ou torchaudio…")
-    subprocess.run([
-        sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--no-deps",
-        "-r", str(APP_DIR / "comfy_requirements.txt"),
-    ], check=True)
-
-    # --no-deps acima preserva o stack CUDA, mas não alinha dependências
-    # transitivas. Resolva o grupo Pydantic junto (ele não depende de torch).
-    print("[setup] Alinhando Pydantic, pydantic-core e pydantic-settings…")
-    subprocess.run([
-        sys.executable, "-m", "pip", "install", "-q", "--upgrade",
-        "--upgrade-strategy", "only-if-needed", "pydantic~=2.0", "pydantic-settings~=2.0",
-    ], check=True)
+    print("[setup] Resolvendo dependências sem substituir o stack GPU do Colab…")
+    protected = {}
+    for name in ("torch", "torchvision", "torchaudio"):
+        try: protected[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            if name == "torch": raise RuntimeError("PyTorch ausente. Use um runtime Colab com GPU.")
+    with tempfile.TemporaryDirectory(prefix="modellab-deps-") as temporary:
+        constraints = Path(temporary) / "constraints.txt"
+        base = (APP_DIR / "runtime_constraints.txt").read_text()
+        constraints.write_text(base + "\n" + "\n".join(f"{key}=={value}" for key, value in protected.items()))
+        # mega.py is a vendored compatibility wrapper; its obsolete tenacity pin
+        # is deliberately not imposed on the rest of the runtime.
+        studio = Path(temporary) / "requirements.txt"
+        studio.write_text("\n".join(line for line in (APP_DIR / "requirements.txt").read_text().splitlines() if not line.startswith("mega.py")))
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade-strategy", "only-if-needed",
+            "-c", str(constraints), "-r", str(studio), "-r", str(APP_DIR / "comfy_requirements.txt"), "tenacity>=8,<10"], check=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "mega.py==1.0.8"], check=True)
+    if any(importlib.metadata.version(key) != value for key, value in protected.items()):
+        raise RuntimeError("O stack GPU foi alterado inesperadamente; reinicie o runtime.")
     validate_pydantic_runtime()
+    subprocess.run([sys.executable, "-c", "import transformers, tokenizers, huggingface_hub, aiohttp, yarl, sqlalchemy, alembic, torchsde, trampoline, websocket; from Crypto.Cipher import AES"], check=True)
+    versions = {distribution.metadata["Name"]: distribution.version for distribution in importlib.metadata.distributions() if distribution.metadata.get("Name")}
+    diagnostic = Path(os.environ.get("STUDIO_ROOT", "/content/modellab-studio")) / "runtime_versions.json"
+    diagnostic.parent.mkdir(parents=True, exist_ok=True)
+    diagnostic.write_text(json.dumps({"python": sys.version, "comfyui_commit": COMFYUI_COMMIT, "packages": versions}, indent=2))
 
 
 def validate_pydantic_runtime() -> None:
@@ -126,16 +135,14 @@ def validate_runtime() -> None:
 
 
 def ensure_cloudflared() -> str:
-    existing = shutil.which("cloudflared") or os.environ.get("CLOUDFLARED_BIN")
-    if existing and Path(existing).exists():
-        return existing
-    print("[setup] Instalando o cliente cloudflared…")
-    binary = Path("/usr/local/bin/cloudflared")
-    subprocess.run([
-        "curl", "-L", "--fail", "--silent", "--show-error",
-        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
-        "-o", str(binary),
-    ], check=True)
+    from studio_downloads import ensure_download
+    custom = os.environ.get("CLOUDFLARED_BIN")
+    if custom:
+        if not Path(custom).is_file(): raise RuntimeError("CLOUDFLARED_BIN não existe.")
+        return custom
+    binary = Path(os.environ.get("STUDIO_ROOT", "/content/modellab-studio")) / "bin" / "cloudflared"
+    ensure_download("https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-amd64", binary, 1,
+        sha256="d33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db")
     binary.chmod(0o755)
     return str(binary)
 
@@ -178,8 +185,7 @@ def main() -> None:
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
     ask_secret("CIVITAI_TOKEN", "Token Civitai (Enter para continuar sem token): ", required=False)
 
-    # Configuração técnica padronizada: Nova EXAnime AM é Anima bf16;
-    # o loader nativo do ComfyUI faz o cast FP16 compatível com a T4.
+    # WAI-ANIMA FP16 é o default; configurações explícitas são preservadas.
     os.environ.setdefault("STUDIO_ROOT", "/content/modellab-studio")
     if "HF_HOME" not in os.environ:
         legacy_hf_home = Path.home() / ".cache" / "huggingface"
@@ -191,15 +197,17 @@ def main() -> None:
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
     # Substitui defaults antigos persistidos no runtime; perfis customizados ainda
     # podem ser fornecidos por MODELS_CONFIG.
-    os.environ["MODEL_ID"] = "wai-anima"
-    os.environ["MODEL_URL"] = "https://civitai.com/api/download/models/2983680?fileId=2863158"
-    os.environ["MODEL_REPO"] = ""
-    os.environ["MODEL_PATH"] = f"{os.environ['STUDIO_ROOT']}/models/diffusion_models/WAI-ANIMA1.safetensors"
-    os.environ["MODEL_FAMILY"] = "anima"
+    os.environ.setdefault("MODEL_ID", "wai-anima")
+    os.environ.setdefault("MODEL_URL", "https://civitai.com/api/download/models/2983680?fileId=2863158")
+    os.environ.setdefault("MODEL_REPO", "")
+    os.environ.setdefault("MODEL_PATH", f"{os.environ['STUDIO_ROOT']}/models/diffusion_models/WAI-ANIMA1.safetensors")
+    os.environ.setdefault("MODEL_FAMILY", "anima")
     os.environ["COMFYUI_DIR"] = str(COMFYUI_DIR)
     # O base-directory do ComfyUI coincide com STUDIO_ROOT para compartilhar
     # models/diffusion_models, models/text_encoders e models/vae.
-    os.environ["COMFY_ROOT"] = os.environ["STUDIO_ROOT"]
+    os.environ.setdefault("COMFY_ROOT", os.environ["STUDIO_ROOT"])
+    os.environ.setdefault("STUDIO_TRUST_TUNNEL", "1")
+    os.environ.setdefault("STUDIO_COOKIE_SECURE", "1")
     print("[setup] Perfil WAI-ANIMA v1.0 padronizado; backend ComfyUI headless e modelo residente na GPU configurados.")
 
     install_requirements()
@@ -209,10 +217,9 @@ def main() -> None:
     print(f"[setup] Iniciando ModelLab Studio na GPU atual (aguardando até {SERVER_START_TIMEOUT:g}s)…")
     server = subprocess.Popen(
         [sys.executable, "server.py"], cwd=APP_DIR, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy(),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True,
     )
     threading.Thread(target=pipe_output, args=(server, "server"), daemon=True).start()
-    wait_for_server(server)
 
     current_url = APP_DIR / "current_tunnel_url.txt"
     tunnel: subprocess.Popen[str] | None = None
@@ -242,11 +249,14 @@ def main() -> None:
         return tunnel
 
     try:
+        wait_for_server(server)
         tunnel = start_tunnel()
+        tunnel_failures = 0
         while server.poll() is None:
             if tunnel.poll() is not None:
                 print("[tunnel] O cloudflared encerrou; criando um novo endereço público…")
-                time.sleep(2)
+                tunnel_failures += 1
+                time.sleep(min(2 ** min(tunnel_failures, 5), 30))
                 tunnel = start_tunnel()
             time.sleep(1)
     except KeyboardInterrupt:
@@ -254,7 +264,10 @@ def main() -> None:
         print("\n[shutdown] Encerrando túnel e servidor…")
     finally:
         for process in (tunnel, server):
-            if process is not None and process.poll() is None:
+            if process is server and process is not None:
+                try: os.killpg(server.pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+            elif process is not None and process.poll() is None:
                 process.terminate()
         current_url.unlink(missing_ok=True)
         for process in (tunnel, server):
@@ -262,7 +275,9 @@ def main() -> None:
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    if process is server: os.killpg(server.pid, signal.SIGKILL)
+                    else: process.kill()
+                    process.wait(timeout=5)
 
 
 if __name__ == "__main__":
