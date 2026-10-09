@@ -62,11 +62,11 @@ for directory in (MODELS, LORAS, OUTPUTS, UPLOADS, HF_HUB_CACHE):
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MAX_LORAS = int(os.environ.get("MODELLAB_MAX_LORAS", "8"))
 MODEL_URL = os.environ.get(
-    "MODEL_URL", "https://civitai.com/api/download/models/3226184?fileId=3108312"
+    "MODEL_URL", "https://civitai.com/api/download/models/2983680?fileId=2863158"
 )
 MODEL_REPO = os.environ.get("MODEL_REPO", "")
-MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "diffusion_models" / "novaExanimeAM_v10.safetensors"))
-DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "nova-exanime-am")
+MODEL_PATH = Path(os.environ.get("MODEL_PATH", MODELS / "diffusion_models" / "WAI-ANIMA1.safetensors"))
+DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "wai-anima")
 MEGA_FOLDER = os.environ.get("MEGA_FOLDER", "ModelLabStudio")
 CIVITAI_BASE = "https://civitai.com/api/v1"
 LAST_SETTINGS_NAME = "last_settings.json"
@@ -203,7 +203,7 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
     base_profile = family_profile(default_family)
     default = {
         "id": DEFAULT_MODEL_ID,
-        "name": "Nova EXAnime AM" if DEFAULT_MODEL_ID == "nova-exanime-am" else DEFAULT_MODEL_ID,
+        "name": "WAI-ANIMA v1.0" if DEFAULT_MODEL_ID == "wai-anima" else ("Nova EXAnime AM" if DEFAULT_MODEL_ID == "nova-exanime-am" else DEFAULT_MODEL_ID),
         "url": MODEL_URL,
         "repo": MODEL_REPO,
         "path": str(MODEL_PATH),
@@ -213,10 +213,24 @@ def _load_model_specs() -> dict[str, dict[str, Any]]:
         "lora_base": base_profile["lora_base"],
         "defaults": dict(base_profile["defaults"]),
         "notes": base_profile["notes"],
-        "civitai_model_id": 2856434 if DEFAULT_MODEL_ID == "nova-exanime-am" else None,
-        "version_id": 3226184 if DEFAULT_MODEL_ID == "nova-exanime-am" else None,
+        "civitai_model_id": 2544636 if DEFAULT_MODEL_ID == "wai-anima" else (2856434 if DEFAULT_MODEL_ID == "nova-exanime-am" else None),
+        "version_id": 2983680 if DEFAULT_MODEL_ID == "wai-anima" else (3226184 if DEFAULT_MODEL_ID == "nova-exanime-am" else None),
     }
     specs: dict[str, dict[str, Any]] = {DEFAULT_MODEL_ID: default}
+    if DEFAULT_MODEL_ID == "wai-anima":
+        default["defaults"].update({
+            "steps": 24, "guidance": 5.0, "sampler": "euler_a",
+            "positive_prefix": "masterpiece, best quality, score_7",
+            "negative_prompt": "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, lowres, censor",
+        })
+        default["notes"] = "WAI-ANIMA v1.0 (base Anima 1.0), FP16; encoder Qwen e Qwen Image VAE via ComfyUI."
+        specs["nova-exanime-am"] = {
+            **default, "id": "nova-exanime-am", "name": "Nova EXAnime AM",
+            "url": "https://civitai.com/api/download/models/3226184?fileId=3108312",
+            "path": str(MODELS / "diffusion_models" / "novaExanimeAM_v10.safetensors"),
+            "defaults": dict(base_profile["defaults"]), "notes": base_profile["notes"],
+            "civitai_model_id": 2856434, "version_id": 3226184,
+        }
     raw = os.environ.get("MODELS_CONFIG", "").strip()
     if not raw:
         return specs

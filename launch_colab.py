@@ -51,6 +51,29 @@ def install_requirements() -> None:
         "-r", str(APP_DIR / "comfy_requirements.txt"),
     ], check=True)
 
+    # --no-deps acima preserva o stack CUDA, mas não alinha dependências
+    # transitivas. Resolva o grupo Pydantic junto (ele não depende de torch).
+    print("[setup] Alinhando Pydantic, pydantic-core e pydantic-settings…")
+    subprocess.run([
+        sys.executable, "-m", "pip", "install", "-q", "--upgrade",
+        "--upgrade-strategy", "only-if-needed", "pydantic~=2.0", "pydantic-settings~=2.0",
+    ], check=True)
+    validate_pydantic_runtime()
+
+
+def validate_pydantic_runtime() -> None:
+    """Teste em processo novo para evitar módulos antigos no cache de imports."""
+    result = subprocess.run([
+        sys.executable, "-c",
+        "import pydantic, pydantic_core; from pydantic_settings import BaseSettings; "
+        "from pydantic import TypeAdapter; "
+        "assert TypeAdapter(int).validate_python('7') == 7; "
+        "print('pydantic=' + pydantic.__version__ + ', core=' + pydantic_core.__version__)",
+    ], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError("Falha na validação das dependências Pydantic antes de iniciar ComfyUI: " + result.stderr[-3000:])
+    print("[setup] " + result.stdout.strip())
+
 
 def ensure_comfyui() -> None:
     """Instala uma revisão conhecida do backend sem abrir o frontend."""
@@ -168,16 +191,16 @@ def main() -> None:
     os.environ.setdefault("MEGA_FOLDER", "ModelLabStudio")
     # Substitui defaults antigos persistidos no runtime; perfis customizados ainda
     # podem ser fornecidos por MODELS_CONFIG.
-    os.environ["MODEL_ID"] = "nova-exanime-am"
-    os.environ["MODEL_URL"] = "https://civitai.com/api/download/models/3226184?fileId=3108312"
+    os.environ["MODEL_ID"] = "wai-anima"
+    os.environ["MODEL_URL"] = "https://civitai.com/api/download/models/2983680?fileId=2863158"
     os.environ["MODEL_REPO"] = ""
-    os.environ["MODEL_PATH"] = f"{os.environ['STUDIO_ROOT']}/models/diffusion_models/novaExanimeAM_v10.safetensors"
+    os.environ["MODEL_PATH"] = f"{os.environ['STUDIO_ROOT']}/models/diffusion_models/WAI-ANIMA1.safetensors"
     os.environ["MODEL_FAMILY"] = "anima"
     os.environ["COMFYUI_DIR"] = str(COMFYUI_DIR)
     # O base-directory do ComfyUI coincide com STUDIO_ROOT para compartilhar
     # models/diffusion_models, models/text_encoders e models/vae.
     os.environ["COMFY_ROOT"] = os.environ["STUDIO_ROOT"]
-    print("[setup] Perfil Nova EXAnime AM padronizado; backend ComfyUI headless e modelo residente na GPU configurados.")
+    print("[setup] Perfil WAI-ANIMA v1.0 padronizado; backend ComfyUI headless e modelo residente na GPU configurados.")
 
     install_requirements()
     ensure_comfyui()

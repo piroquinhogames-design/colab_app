@@ -130,12 +130,12 @@ def main() -> None:
     if server.GeneratorEngine._is_unsupported_lora_key("lora_unet_down_blocks_0.lora_down.weight"):
         raise AssertionError("Pesos normais da LoRA não podem ser descartados")
     default_spec = server.get_model_spec()
-    assert_equal(default_spec["id"], "nova-exanime-am", "O perfil padrão deve ser Nova EXAnime AM")
+    assert_equal(default_spec["id"], "wai-anima", "O perfil padrão deve ser WAI-ANIMA")
     assert_equal(default_spec["family"], "anima", "A família padrão deve ser Anima")
     assert_equal(default_spec["engine"], "comfyui", "O engine padrão deve ser ComfyUI headless")
     assert_equal(default_spec.get("repo", ""), "", "O perfil single-file não deve exigir um repositório Diffusers")
-    assert_equal(default_spec["civitai_model_id"], 2856434, "O ID do modelo Civitai deve ser 2856434")
-    assert_equal(default_spec["version_id"], 3226184, "O ID da versão Civitai deve ser 3226184")
+    assert_equal(default_spec["civitai_model_id"], 2544636, "O ID do modelo Civitai deve ser 2544636")
+    assert_equal(default_spec["version_id"], 2983680, "O ID da versão Civitai deve ser 2983680")
     assert_equal(server.public_model_spec(default_spec)["ready"], True, "O perfil Anima deve aparecer como pronto")
     adaptive = server.validate_params({"prompt": "model profile test", "model": server.DEFAULT_MODEL_ID, "sampler": "euler_a"}, None)
     assert_equal(adaptive.model_id, server.DEFAULT_MODEL_ID, "Perfil de modelo deve ser preservado na validação")
@@ -156,17 +156,20 @@ def main() -> None:
     original_app_dir = launch_colab.APP_DIR
     calls: list[list[str]] = []
     original_run = launch_colab.subprocess.run
+    original_validate = launch_colab.validate_pydantic_runtime
     try:
         (isolated_root / "requirements.txt").write_text("", encoding="utf-8")
         (isolated_root / "comfy_requirements.txt").write_text("", encoding="utf-8")
         launch_colab.APP_DIR = isolated_root
         launch_colab.subprocess.run = lambda command, **_: calls.append(command)
+        launch_colab.validate_pydantic_runtime = lambda: None
         launch_colab.install_requirements()
-        if len(calls) != 2 or any(command[0] != sys.executable or "--no-deps" not in command or "--upgrade" not in command for command in calls):
+        if len(calls) != 3 or any(command[0] != sys.executable or "--no-deps" not in command or "--upgrade" not in command for command in calls[:2]) or "--no-deps" in calls[2] or "pydantic~=2.0" not in calls[2]:
             raise AssertionError("O instalador deve atualizar as dependências sem substituir o runtime CUDA")
     finally:
         launch_colab.APP_DIR = original_app_dir
         launch_colab.subprocess.run = original_run
+        launch_colab.validate_pydantic_runtime = original_validate
 
     anonymous = server.app.test_client()
     assert_equal(anonymous.get("/api/history").status_code, 401, "Histórico deve exigir sessão")

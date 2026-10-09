@@ -12,9 +12,9 @@ No Colab, com GPU T4 selecionada em **Ambiente de execução → Alterar tipo de
 !python /content/colab_app/launch_colab.py
 ```
 
-O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. Não é mais necessário token do ngrok, pois o endereço público é criado automaticamente pelo Cloudflare Tunnel. O perfil **Nova EXAnime AM** e o backend **ComfyUI headless** são configurados automaticamente; nenhum navegador do ComfyUI é aberto. O token é utilizado apenas pelo processo do servidor para consultar/baixar recursos do Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
+O inicializador solicitará, sem imprimir os valores, apenas a senha do painel, o e-mail e a senha do MEGA e, opcionalmente, o token Civitai. Não é mais necessário token do ngrok, pois o endereço público é criado automaticamente pelo Cloudflare Tunnel. O perfil **WAI-ANIMA v1.0** e o backend **ComfyUI headless** são configurados automaticamente; nenhum navegador do ComfyUI é aberto. O token é utilizado apenas pelo processo do servidor para consultar/baixar recursos do Civitai; ele não aparece na interface nem é enviado ao navegador. A senha de acesso protege o painel durante a sessão do túnel.
 
-A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Hugging Face Hub 0.34.0–0.x**, **hf-xet 1.1.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, além das dependências nativas do ComfyUI, sem atualizar PyTorch, CUDA ou dependências indiretas globais do Colab.
+A instalação usa a matriz mínima compatível de **Transformers 4.51.0+**, **Tokenizers 0.21.x**, **Hugging Face Hub 0.34.0–0.x**, **hf-xet 1.1.0+**, **Safetensors 0.8.0+** e **PyCryptodome 3.21.0**, além das dependências nativas do ComfyUI, sem atualizar PyTorch ou CUDA; o grupo Pydantic é resolvido com suas dependências.
 
 > Se uma sessão anterior instalou uma versão incompatível de PyTorch, use **Ambiente de execução → Desconectar e excluir ambiente de execução** antes de executar o setup novamente.
 
@@ -24,9 +24,15 @@ O painel usa a identidade **ModelLab Studio**, com tema escuro, camadas translú
 
 O histórico apresenta o checkpoint e o sampler usados em cada resultado, oferece remix e possui um botão de exclusão que remove o registro local e, quando sincronizado, o PNG e o manifesto correspondente do MEGA.
 
-## Modelo padrão: Nova EXAnime AM
+## Modelo padrão: WAI-ANIMA v1.0
 
-O perfil inicial é **Nova EXAnime AM**, modelo Civitai `2856434`, versão `3226184`, arquivo `novaExanimeAM_v10.safetensors`, com base declarada como **Anima B1 + A11** e precisão publicada como BF16. Ele não é SDXL e não é carregado pelo Diffusers. O fluxo atual oferece **TXT→IMG** e LoRAs compatíveis com Anima; IMG→IMG não é exposto porque não faz parte do workflow Anima validado.
+O WAI-ANIMA v1.0 (base Anima 1.0, FP16) é o perfil inicial. Fonte do autor: https://civitai.com/models/2544636/wai-anima. Download fixado na versão `2983680`, arquivo `2863158`: `WAI-ANIMA1.safetensors`. Usa o workflow Anima existente, encoder Qwen e Qwen Image VAE, com 24 steps, CFG 5 e Euler a. O Nova EXAnime AM continua disponível em Configurações.
+
+O setup resolve Pydantic e pydantic-settings com suas dependências, incluindo a versão exata de pydantic-core exigida pelo Pydantic instalado. Um teste de import e validação em processo novo interrompe o setup cedo se o grupo estiver incompatível. PyTorch/CUDA continuam preservados. Para corrigir uma sessão já quebrada, atualize o clone e execute novamente o launcher.
+
+### Perfil alternativo: Nova EXAnime AM
+
+O perfil alternativo é **Nova EXAnime AM**, modelo Civitai `2856434`, versão `3226184`, arquivo `novaExanimeAM_v10.safetensors`, com base declarada como **Anima B1 + A11** e precisão publicada como BF16. Ele não é SDXL e não é carregado pelo Diffusers. O fluxo atual oferece **TXT→IMG** e LoRAs compatíveis com Anima; IMG→IMG não é exposto porque não faz parte do workflow Anima validado.
 
 O endpoint do checkpoint é `https://civitai.com/api/download/models/3226184?fileId=3108312`. O backend baixa o arquivo com retomada HTTP (`Range`) e preserva um `.part` quando a célula é interrompida. O arquivo completo fica em `STUDIO_ROOT/models/diffusion_models/novaExanimeAM_v10.safetensors`. Também são baixados, uma única vez, `qwen_3_06b_base.safetensors` em `models/text_encoders/` e `qwen_image_vae.safetensors` em `models/vae/`.
 
@@ -96,17 +102,17 @@ Use variáveis de ambiente antes de executar o inicializador. Nunca coloque segr
 | Variável | Finalidade | Padrão |
 |---|---|---|
 | `MEGA_FOLDER` | Pasta remota para imagens e metadados | `ModelLabStudio` |
-| `MODEL_ID` | Identificador do perfil padrão | `nova-exanime-am` |
-| `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/3226184?fileId=3108312` |
+| `MODEL_ID` | Identificador do perfil padrão | `wai-anima` |
+| `MODEL_URL` | Endpoint de download do perfil padrão | `https://civitai.com/api/download/models/2983680?fileId=2863158` |
 | `MODEL_REPO` | Repositório Diffusers auxiliar, não usado pelo perfil padrão | vazio |
-| `MODEL_PATH` | Caminho do checkpoint Civitai | `/content/modellab-studio/models/diffusion_models/novaExanimeAM_v10.safetensors` |
+| `MODEL_PATH` | Caminho do checkpoint Civitai | `/content/modellab-studio/models/diffusion_models/WAI-ANIMA1.safetensors` |
 | `MODEL_FAMILY` | Família declarada do perfil padrão | `anima` |
 | `COMFYUI_DIR` | Clone do backend ComfyUI | `/content/ComfyUI` |
 | `COMFYUI_COMMIT` | Revisão validada do backend | `c1739380c6fa…` |
 | `COMFY_ROOT` | Base-directory compartilhado com `STUDIO_ROOT` | igual a `STUDIO_ROOT` |
 | `COMFYUI_EXTRA_ARGS` | Flags adicionais opcionais; não use `--lowvram` se quiser manter a carga na GPU | vazio |
 | `MODELLAB_CLEANUP_CUDA` | Habilita limpeza explícita do allocator após cada imagem | `0` (recomendado) |
-| `MODELS_CONFIG` | JSON com perfis adicionais | vazio; somente o perfil padrão |
+| `MODELS_CONFIG` | JSON com perfis adicionais | vazio; WAI-ANIMA e Nova EXAnime AM |
 | `STUDIO_ROOT` | Diretório temporário da sessão e cache padrão do Hub | `/content/modellab-studio` |
 | `HF_HOME` | Raiz opcional para cache persistente do Hugging Face | `STUDIO_ROOT/huggingface-cache` |
 | `HF_HUB_CACHE` | Cache de snapshots do Hub | `HF_HOME/hub` |
