@@ -31,7 +31,7 @@ A implementação de IMG→IMG e tiles tem testes de workflow. A geração real 
 
 ## Configuração
 
-`STUDIO_ROOT` define o armazenamento local (padrão `/content/modellab-studio`). Checkpoints ficam em `models/diffusion_models`; Qwen/VAE e LoRAs têm diretórios próprios. `COMFY_ROOT`, `COMFY_PORT` e `STUDIO_PORT` permitem alterar os serviços. `COMFY_MEMORY_MODE` aceita `--gpu-only`, `--normalvram` ou `--lowvram`; comece com o padrão e use modo de menor VRAM se a geração real falhar por memória. `STUDIO_QUEUE_LIMIT` limita a fila (padrão 8). `MEGA_FOLDER` escolhe a pasta remota. Veja [arquitetura](ARCHITECTURE.md).
+`STUDIO_ROOT` define o armazenamento local (padrão `/content/modellab-studio`). Checkpoints ficam em `models/diffusion_models`; Qwen/VAE e LoRAs têm diretórios próprios. `COMFY_ROOT`, `COMFY_PORT` e `STUDIO_PORT` permitem alterar os serviços. `COMFY_MEMORY_MODE` aceita `--gpu-only`, `--normalvram` ou `--lowvram`; comece com o padrão e use modo de menor VRAM se a geração real falhar por memória. `STUDIO_MAX_QUEUE` limita a fila (padrão 8). `MEGA_FOLDER` escolhe a pasta remota. Veja [arquitetura](ARCHITECTURE.md).
 
 A configuração `STUDIO_COOKIE_SECURE=0` é exclusiva para desenvolvimento HTTP local. Em produção no túnel, mantenha cookies seguros. `STUDIO_START_WORKERS=0` desativa workers nos testes. `STUDIO_TRUSTED_HOSTS` permite hosts adicionais quando necessário.
 
