@@ -1,7 +1,7 @@
 """Execute este arquivo em uma célula Colab depois de enviar a pasta colab_app.
 
 Exemplo: !python /content/colab_app/launch_colab.py
-Interrompa a célula para encerrar servidor e túnel.
+Interrompa a célula para encerrar servidor e todos os túneis.
 """
 
 from __future__ import annotations
@@ -40,6 +40,27 @@ def ask_secret(name: str, prompt: str, required: bool = True) -> None:
         raise RuntimeError(f"{name} é obrigatório.")
     if value:
         os.environ[name] = value
+
+
+def ask_comfy_exposure() -> bool:
+    """Pede consentimento novo em cada execução; ausência de resposta é não."""
+    print("\n[setup] Integração externa com SillyTavern (opcional).")
+    print("AVISO: esta opção cria uma URL pública do ComfyUI SEM autenticação.")
+    print("Quem tiver o link poderá gerar/cancelar imagens, consumir sua GPU e acessar arquivos servidos pelo ComfyUI.")
+    print("A senha do painel NÃO protege esta API. Ative apenas se aceitar esse acesso nesta sessão.")
+    while True:
+        try:
+            answer = input("Expor a API ComfyUI publicamente nesta sessão? [sim/NÃO]: ").strip().casefold()
+        except (EOFError, OSError):
+            print("[setup] Entrada indisponível; API ComfyUI externa desativada.")
+            return False
+        if answer in {"sim", "s", "yes", "y"}:
+            print("[setup] Exposição pública aceita para esta sessão.")
+            return True
+        if answer in {"", "não", "nao", "n", "no"}:
+            print("[setup] API ComfyUI externa desativada.")
+            return False
+        print("Responda sim ou não. Enter mantém a API externa desativada.")
 
 
 def install_requirements() -> None:
@@ -149,12 +170,93 @@ def ensure_cloudflared() -> str:
 
 def pipe_output(process: subprocess.Popen[str], label: str, on_line=None) -> None:
     assert process.stdout is not None
-    for raw in iter(process.stdout.readline, ""):
-        line = raw.rstrip()
-        if line:
-            print(f"[{label}] {line}")
-            if on_line:
-                on_line(line)
+    try:
+        for raw in iter(process.stdout.readline, ""):
+            line = raw.rstrip()
+            if line:
+                print(f"[{label}] {line}")
+                if on_line:
+                    on_line(line)
+    finally:
+        process.stdout.close()
+
+
+class QuickTunnel:
+    """Supervisiona um túnel sem bloquear a recuperação dos demais serviços."""
+
+    def __init__(self, binary: str, port: int, name: str, url_file: Path, on_url) -> None:
+        self.binary, self.port, self.name = binary, port, name
+        self.url_file, self.on_url = url_file, on_url
+        self.process: subprocess.Popen[str] | None = None
+        self.url = ""
+        self.failures = 0
+        self.retry_at = 0.0
+        self.lock = threading.Lock()
+        self.stopped = False
+        self.url_file.unlink(missing_ok=True)
+
+    def _capture_url(self, process, line: str) -> None:
+        match = TUNNEL_PATTERN.search(line)
+        if not match:
+            return
+        with self.lock:
+            # Uma thread do processo anterior não pode publicar um link antigo.
+            if self.stopped or process is not self.process or self.url or process.poll() is not None:
+                return
+            self.url = match.group(0)
+            self.url_file.write_text(self.url + "\n", encoding="utf-8")
+            self.on_url(self.url)
+
+    def _retry(self) -> None:
+        self.failures += 1
+        self.retry_at = time.monotonic() + min(2 ** min(self.failures, 5), 30)
+        print(f"[{self.name}] Túnel indisponível; um novo endereço será criado em instantes.", flush=True)
+
+    def service(self) -> None:
+        if self.stopped:
+            return
+        if self.process is not None:
+            if self.process.poll() is None:
+                return
+            with self.lock:
+                self.process = None
+                self.url = ""
+                self.url_file.unlink(missing_ok=True)
+            self._retry()
+            return
+        if time.monotonic() < self.retry_at:
+            return
+        try:
+            process = subprocess.Popen(
+                [self.binary, "tunnel", "--url", f"http://127.0.0.1:{self.port}"], text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+        except OSError as exc:
+            print(f"[{self.name}] Falha ao iniciar cloudflared: {exc}", flush=True)
+            self._retry()
+            return
+        with self.lock:
+            self.process = process
+        threading.Thread(
+            target=pipe_output,
+            args=(process, self.name, lambda line: self._capture_url(process, line)),
+            daemon=True,
+        ).start()
+
+    def close(self) -> None:
+        with self.lock:
+            self.stopped = True
+            process, self.process = self.process, None
+            self.url = ""
+            self.url_file.unlink(missing_ok=True)
+        if process is not None:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
 
 
 def wait_for_server(process: subprocess.Popen[str]) -> None:
@@ -180,6 +282,9 @@ def wait_for_server(process: subprocess.Popen[str]) -> None:
 def main() -> None:
     if not os.path.exists("/content"):
         print("Aviso: este inicializador foi desenhado para Google Colab.")
+    expose_comfy = ask_comfy_exposure()
+    # Nunca reutiliza uma autorização de uma execução/ambiente anterior.
+    os.environ["STUDIO_PREPARE_COMFY"] = "1" if expose_comfy else "0"
     ask_secret("STUDIO_PASSWORD", "Defina a senha de acesso ao painel: ")
     ask_secret("MEGA_EMAIL", "E-mail da conta MEGA: ")
     ask_secret("MEGA_PASSWORD", "Senha da conta MEGA: ")
@@ -216,69 +321,73 @@ def main() -> None:
     cloudflared = ensure_cloudflared()
     print(f"[setup] Iniciando ModelLab Studio na GPU atual (aguardando até {SERVER_START_TIMEOUT:g}s)…")
     server = subprocess.Popen(
-        [sys.executable, "server.py"], cwd=APP_DIR, text=True,
+        [sys.executable, "-u", "server.py"], cwd=APP_DIR, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True,
     )
     threading.Thread(target=pipe_output, args=(server, "server"), daemon=True).start()
 
-    current_url = APP_DIR / "current_tunnel_url.txt"
-    tunnel: subprocess.Popen[str] | None = None
-    shutdown_requested = False
+    def show_panel_url(url: str) -> None:
+        print(f"\nURL ATUAL DO PAINEL: {url}", flush=True)
+        print("Use a senha definida nesta célula. O endereço muda quando o túnel é recriado.", flush=True)
+        if expose_comfy:
+            print(f"WORKFLOW SILLYTAVERN (entre no painel antes de baixar): {url}/api/sillytavern/workflow", flush=True)
+        print("Pare a célula para encerrar o servidor e todos os túneis.\n", flush=True)
 
-    def start_tunnel() -> subprocess.Popen[str]:
-        nonlocal tunnel
-        current_url.unlink(missing_ok=True)
-        public_url: list[str] = []
+    def show_comfy_url(url: str) -> None:
+        print(f"\nURL DO COMFYUI PARA SILLYTAVERN: {url}", flush=True)
+        print("Source: ComfyUI | Server Type: Standard Server | ComfyUI URL: o endereço acima.", flush=True)
+        print("Use o workflow ModelLab_SillyTavern.json; comece com 768×768, 24 passos, CFG 5, euler_ancestral / normal.", flush=True)
+        print("Este acesso à API é público, sem senha. Se o túnel reiniciar, atualize a URL no SillyTavern.\n", flush=True)
 
-        def capture_url(line: str) -> None:
-            match = TUNNEL_PATTERN.search(line)
-            if match and not public_url:
-                public_url.append(match.group(0))
-                current_url.write_text(public_url[0] + "\n", encoding="utf-8")
-                print("\n" + "=" * 72)
-                print(f"URL ATUAL DO PAINEL: {public_url[0]}")
-                print("Abra exatamente esta URL; ela muda quando o túnel é recriado.")
-                print("Use a senha definida nesta célula. Pare a célula para encerrar o nó.")
-                print("=" * 72 + "\n")
-
-        tunnel = subprocess.Popen(
-            [cloudflared, "tunnel", "--url", f"http://127.0.0.1:{PORT}"], text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-        threading.Thread(target=pipe_output, args=(tunnel, "tunnel", capture_url), daemon=True).start()
-        return tunnel
+    panel_tunnel = QuickTunnel(cloudflared, int(PORT), "tunnel-painel", APP_DIR / "current_tunnel_url.txt", show_panel_url)
+    comfy_url_file = APP_DIR / "current_comfy_tunnel_url.txt"
+    comfy_url_file.unlink(missing_ok=True)
+    comfy_tunnel = QuickTunnel(
+        cloudflared, int(os.environ.get("COMFY_PORT", "8188")), "tunnel-comfyui", comfy_url_file, show_comfy_url,
+    ) if expose_comfy else None
+    comfy_ready = False
+    comfy_failed = False
 
     try:
         wait_for_server(server)
-        tunnel = start_tunnel()
-        tunnel_failures = 0
+        if expose_comfy:
+            print("[setup] Preparando modelo, encoder e VAE; o link ComfyUI será publicado quando o backend estiver pronto.", flush=True)
         while server.poll() is None:
-            if tunnel.poll() is not None:
-                print("[tunnel] O cloudflared encerrou; criando um novo endereço público…")
-                tunnel_failures += 1
-                time.sleep(min(2 ** min(tunnel_failures, 5), 30))
-                tunnel = start_tunnel()
+            panel_tunnel.service()
+            if comfy_tunnel is not None and not comfy_ready and not comfy_failed:
+                try:
+                    response = requests.get(f"http://127.0.0.1:{PORT}/api/health", timeout=2)
+                    response.raise_for_status()
+                    status = response.json().get("public_comfy", {}).get("status")
+                    comfy_ready = status == "ready"
+                    if status == "failed":
+                        comfy_failed = True
+                        print("[setup] Falha ao preparar ComfyUI externo; nenhum túnel de API foi aberto. Consulte o erro [comfy-setup] acima.", flush=True)
+                except (requests.RequestException, ValueError):
+                    pass
+            if comfy_tunnel is not None and comfy_ready:
+                comfy_tunnel.service()
             time.sleep(1)
     except KeyboardInterrupt:
-        shutdown_requested = True
-        print("\n[shutdown] Encerrando túnel e servidor…")
+        print("\n[shutdown] Encerrando túneis e servidor…", flush=True)
     finally:
-        for process in (tunnel, server):
-            if process is server and process is not None:
-                try: os.killpg(server.pid, signal.SIGTERM)
-                except ProcessLookupError: pass
-            elif process is not None and process.poll() is None:
-                process.terminate()
-        current_url.unlink(missing_ok=True)
-        for process in (tunnel, server):
-            if process is not None:
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    if process is server: os.killpg(server.pid, signal.SIGKILL)
-                    else: process.kill()
-                    process.wait(timeout=5)
+        # Interrompe também downloads/ComfyUI iniciados no grupo do servidor.
+        try: os.killpg(server.pid, signal.SIGTERM)
+        except ProcessLookupError: pass
+        panel_tunnel.close()
+        if comfy_tunnel is not None:
+            comfy_tunnel.close()
+        try:
+            server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(server.pid, signal.SIGKILL)
+            server.wait(timeout=5)
+
+
+def handle_shutdown(_signum, _frame) -> None:
+    raise KeyboardInterrupt
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, handle_shutdown)
     main()
