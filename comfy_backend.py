@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import requests
@@ -421,6 +422,23 @@ class ComfyBackend:
             model_node = node_id
         if lora_names:
             workflow["7"]["inputs"]["model"] = [model_node, 0]
+        return workflow
+
+    def build_sillytavern_workflow(self, spec: dict[str, Any], model_filename: str) -> dict[str, dict[str, Any]]:
+        """Exporta o mesmo TXT→IMG com placeholders reconhecidos pelo SillyTavern."""
+        job = SimpleNamespace(id="sillytavern", params=SimpleNamespace(
+            prompt="", negative_prompt="", seed=0, steps=24, guidance=5.0,
+            width=768, height=768, sampler="euler_a", mode="text2img", strength=1.0, upscale=1.0,
+        ))
+        workflow = self.build_workflow(job, spec, model_filename, [])
+        # Substituições do ST precisam ocupar o valor JSON inteiro, inclusive
+        # quando o valor que será inserido é um número.
+        workflow["4"]["inputs"]["text"] = "%prompt%"
+        workflow["5"]["inputs"]["text"] = "%negative_prompt%"
+        workflow["6"]["inputs"].update(width="%width%", height="%height%")
+        workflow["7"]["inputs"].update(
+            seed="%seed%", steps="%steps%", cfg="%scale%", sampler_name="%sampler%", scheduler="%scheduler%",
+        )
         return workflow
 
     def _download_output(self, image_info: dict[str, Any]) -> bytes:

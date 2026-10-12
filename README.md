@@ -15,6 +15,31 @@ Se já houver um clone, atualize com `git -C /content/colab_app pull --ff-only`.
 
 O launcher instala o grupo de dependências com resolução normal, preservando o stack GPU instalado no Colab. Apenas `mega.py` é instalado isoladamente porque sua dependência antiga de tenacity conflita com Python moderno. `runtime_constraints.txt` fixa Pydantic 2.14.0 com pydantic-core 2.50.0, além do grupo Transformers/Tokenizers/Hub. Imports são verificados em um processo novo antes de iniciar o servidor. Isso corrige a incompatibilidade entre Pydantic e pydantic-core relatada.
 
+## Usar no SillyTavern
+
+Em cada execução, o setup pergunta: `Expor a API ComfyUI publicamente nesta sessão? [sim/NÃO]`. A resposta padrão é não; Enter ou entrada indisponível mantêm a API externa desativada. A escolha não é salva para a próxima sessão.
+
+Antes da pergunta, o setup avisa que o link do ComfyUI permite gerar e cancelar imagens, consumir GPU e acessar arquivos servidos pelo backend sem autenticação. A senha do painel não protege esse link. Responda `sim` somente se aceitar esse acesso público.
+
+Ao aceitar, o servidor prepara o modelo configurado, encoder e VAE em segundo plano. O painel fica acessível enquanto os arquivos são baixados. O launcher abre o segundo túnel apenas quando o ComfyUI e seu workflow estão prontos; uma falha na preparação mantém somente o painel acessível. Não é necessário gerar uma imagem no painel para inicializar a integração.
+
+O console mostra dois endereços separados: `URL ATUAL DO PAINEL` e `URL DO COMFYUI PARA SILLYTAVERN`. No SillyTavern, use:
+
+| Campo | Valor |
+| --- | --- |
+| Source | ComfyUI |
+| Server Type | Standard Server |
+| ComfyUI URL | O link HTTPS de `URL DO COMFYUI PARA SILLYTAVERN`, sem acrescentar uma porta |
+| ComfyUI Workflow | ModelLab_SillyTavern.json |
+
+1. Entre no painel com sua senha e abra o endereço `WORKFLOW SILLYTAVERN` mostrado no console para baixar o JSON. Ele também fica em `STUDIO_ROOT/integrations/ModelLab_SillyTavern.json`.
+2. Toque em Connect no SillyTavern, crie um workflow pelo botão `+` e cole todo o JSON no editor. Os placeholders já estão preparados, inclusive os valores numéricos entre aspas.
+3. Comece com 768×768, 24 passos, CFG 5, sampling method `euler_ancestral` e scheduler `normal`. Teste no chat com `/sd a blue cat sitting by a window`.
+
+O JSON usa o mesmo TXT→IMG Anima do projeto, com encoder Qwen, VAE, latent de 16 canais e decode em tiles. Modelo, encoder e VAE ficam fixados para os arquivos preparados no setup; os seletores Model/VAE do SillyTavern não trocam esses arquivos neste workflow. Prompt, negativo, seed, passos, CFG, resolução, sampler e scheduler vêm do SillyTavern. Prefixos de qualidade/estilo e LoRAs escolhidos no painel não são aplicados a esses pedidos; configure os prompts no SillyTavern e, se necessário, edite o workflow. Uma cópia para o WAI-ANIMA padrão fica em [workflows/WAI_ANIMA_SillyTavern.json](workflows/WAI_ANIMA_SillyTavern.json).
+
+O SillyTavern conversa diretamente com ComfyUI: esses pedidos não passam pela fila limitada, histórico, ampliação ou sincronização MEGA do painel. A fila do ComfyUI é compartilhada com as gerações do painel. Cada túnel é recuperado separadamente quando cai, com um novo link; atualize a URL no SillyTavern se o endereço mudar. Parar a célula encerra ambos os túneis e o backend.
+
 ## Recursos
 
 - TXT→IMG e workflow IMG→IMG com intensidade configurável; decode VAE em tiles e ampliação Lanczos de 1,5×/2× após gerar.
@@ -31,7 +56,7 @@ A implementação de IMG→IMG e tiles tem testes de workflow. A geração real 
 
 ## Configuração
 
-`STUDIO_ROOT` define o armazenamento local (padrão `/content/modellab-studio`). Checkpoints ficam em `models/diffusion_models`; Qwen/VAE e LoRAs têm diretórios próprios. `COMFY_ROOT`, `COMFY_PORT` e `STUDIO_PORT` permitem alterar os serviços. `COMFY_MEMORY_MODE` aceita `--gpu-only`, `--normalvram` ou `--lowvram`; comece com o padrão e use modo de menor VRAM se a geração real falhar por memória. `STUDIO_MAX_QUEUE` limita a fila (padrão 8). `MEGA_FOLDER` escolhe a pasta remota. Veja [arquitetura](ARCHITECTURE.md).
+`STUDIO_ROOT` define o armazenamento local (padrão `/content/modellab-studio`). Checkpoints ficam em `models/diffusion_models`; Qwen/VAE e LoRAs têm diretórios próprios. `COMFY_ROOT`, `COMFY_PORT` (padrão 8188) e `PORT` (painel, padrão 7860) permitem alterar os serviços. `COMFY_MEMORY_MODE` aceita `--gpu-only`, `--normalvram` ou `--lowvram`; comece com o padrão e use modo de menor VRAM se a geração real falhar por memória. `STUDIO_MAX_QUEUE` limita a fila (padrão 8). `MEGA_FOLDER` escolhe a pasta remota. Veja [arquitetura](ARCHITECTURE.md).
 
 A configuração `STUDIO_COOKIE_SECURE=0` é exclusiva para desenvolvimento HTTP local. Em produção no túnel, mantenha cookies seguros. `STUDIO_START_WORKERS=0` desativa workers nos testes. `STUDIO_TRUSTED_HOSTS` permite hosts adicionais quando necessário.
 

@@ -1187,6 +1187,40 @@ manager.restore_local()
 atexit.register(manager.close)
 archive_ready = threading.Event()
 archive_restore_lock = threading.Lock()
+PUBLIC_COMFY_WORKFLOW = ROOT / "integrations" / "ModelLab_SillyTavern.json"
+public_comfy_status = "pending" if os.environ.get("STUDIO_PREPARE_COMFY") == "1" else "disabled"
+
+
+def initialize_public_comfy() -> None:
+    """Prepara o backend local; o launcher só o expõe após este fluxo concluir."""
+    global public_comfy_status
+    public_comfy_status = "preparing"
+    last_phase = None
+
+    def report(*_args, phase=None, **_kwargs):
+        nonlocal last_phase
+        if phase and phase != last_phase:
+            last_phase = phase
+            print(f"[comfy-setup] {phase}", flush=True)
+
+    try:
+        PUBLIC_COMFY_WORKFLOW.unlink(missing_ok=True)
+        with engine.load_lock:
+            spec = get_model_spec()
+            engine._load_pipeline(spec, report)
+            model_name = engine.comfy.register_checkpoint(Path(spec["path"]))
+            workflow = engine.comfy.build_sillytavern_workflow(spec, model_name)
+            atomic_json(PUBLIC_COMFY_WORKFLOW, workflow)
+        public_comfy_status = "ready"
+        print(f"[comfy-setup] Backend pronto. Workflow: {PUBLIC_COMFY_WORKFLOW}", flush=True)
+    except Exception as exc:
+        public_comfy_status = "failed"
+        message = str(exc)
+        for key in ("STUDIO_PASSWORD", "MEGA_PASSWORD", "CIVITAI_TOKEN", "STUDIO_SECRET"):
+            secret = os.environ.get(key, "")
+            if secret:
+                message = message.replace(secret, "[redigido]")
+        print(f"[comfy-setup] Falha: {message}", flush=True)
 
 
 def restore_archive() -> None:
@@ -1255,6 +1289,8 @@ def initialize_archive() -> None:
 
 if os.environ.get("STUDIO_START_WORKERS", "1") == "1":
     threading.Thread(target=initialize_archive, name="archive-initializer", daemon=True).start()
+    if os.environ.get("STUDIO_PREPARE_COMFY") == "1":
+        threading.Thread(target=initialize_public_comfy, name="comfy-initializer", daemon=True).start()
 
 
 def validate_params(raw: dict[str, Any], source_image: str | None) -> GenerationParams:
@@ -1393,6 +1429,18 @@ def comfy_health():
         "model": public_model_spec(get_model_spec()),
         "comfy": engine.comfy.status(),
     })
+
+
+@app.route("/api/sillytavern/workflow")
+@authentication_required
+def sillytavern_workflow():
+    if os.environ.get("STUDIO_PREPARE_COMFY") != "1":
+        return jsonify({"error": "A integração externa não foi habilitada no setup."}), 404
+    if public_comfy_status != "ready" or not PUBLIC_COMFY_WORKFLOW.is_file():
+        return jsonify({"error": "Workflow ainda indisponível. Consulte a preparação no Colab."}), 409
+    response = send_file(PUBLIC_COMFY_WORKFLOW, as_attachment=True, download_name="ModelLab_SillyTavern.json")
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/api/model-catalog")
@@ -2184,6 +2232,7 @@ def health():
     return jsonify({
         "status": "ok", "ready": archive_ready.is_set(),
         "queue": manager.pending.qsize(), "archive": archive.available,
+        "public_comfy": {"status": public_comfy_status},
     })
 
 

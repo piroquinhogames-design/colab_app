@@ -6,3 +6,5 @@ venv/
 node_modules/
 test-results/
 playwright-report/
+current_tunnel_url.txt
+current_comfy_tunnel_url.txt
