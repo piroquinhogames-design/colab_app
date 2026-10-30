@@ -419,3 +419,61 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: ew-resize;
 #preset-select, #preset-name { width: 100%; margin: .6rem 0; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 @media (max-width: 720px) { .comparison-grid { grid-template-columns: 1fr; } }
+
+
+/* Anima LoRA training workspace */
+.lora-training-dialog {
+  width: min(980px, calc(100vw - 2rem));
+  max-height: min(92vh, 980px);
+  overflow-y: auto;
+  padding: 1.25rem;
+  color: var(--ink);
+  background: linear-gradient(150deg, rgba(19,24,38,.96), rgba(8,10,17,.99));
+  border: 1px solid var(--line-hot);
+  border-radius: 26px;
+  box-shadow: 0 35px 120px rgba(0,0,0,.62);
+}
+.lora-training-dialog::backdrop { background: rgba(1,2,5,.78); backdrop-filter: blur(10px); }
+.training-card { margin: .8rem 0; padding: 1rem; border-radius: 18px; }
+.training-section-head, .training-progress-meta { display:flex; align-items:center; justify-content:space-between; gap:.7rem; flex-wrap:wrap; }
+.training-section-head h3 { margin:0; font: .7rem var(--mono); letter-spacing:.12em; color:var(--cyan); }
+.training-section-head > span { color:var(--muted); font:.58rem var(--mono); }
+.training-form { display:grid; gap:.75rem; margin-top:.8rem; }
+.training-form > label, .training-fields label { display:grid; gap:.35rem; color:var(--muted); font:.62rem var(--mono); }
+.training-form input:not([type=checkbox]), .training-form select, .training-form textarea {
+  width:100%; min-width:0; padding:.7rem .75rem; color:var(--ink);
+  border:1px solid var(--line); border-radius:12px; background:rgba(4,7,13,.65);
+  font: .72rem var(--mono);
+}
+.training-form textarea { resize:vertical; }
+.training-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.7rem; }
+.training-confirm { display:flex !important; align-items:center; gap:.55rem; line-height:1.4; }
+.training-confirm input { accent-color:var(--cyan); }
+.training-progress-meta { margin:.85rem 0 .45rem; color:var(--muted); font:.62rem var(--mono); }
+.training-progress-meta strong { color:var(--acid); font-size:1.1rem; }
+.training-progress-rail { height:9px; overflow:hidden; border-radius:99px; background:rgba(255,255,255,.08); }
+.training-progress-rail > div { width:0; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--cyan),var(--acid)); transition:width .25s ease; }
+.training-error { color:#ff8d9a; font:.65rem var(--mono); white-space:pre-wrap; }
+.training-log { max-height:220px; overflow:auto; padding:.8rem; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,.28); color:#b8c5d7; font:.6rem/1.55 var(--mono); white-space:pre-wrap; }
+.trained-lora-list { display:grid; gap:.55rem; margin-top:.7rem; }
+.trained-lora-item { display:flex; align-items:center; justify-content:space-between; gap:.7rem; padding:.65rem .75rem; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.025); }
+.trained-lora-item strong { display:block; font-size:.7rem; overflow-wrap:anywhere; }
+.trained-lora-item small { display:block; margin-top:.2rem; color:var(--muted); font:.55rem var(--mono); }
+.trained-lora-item button { border:1px solid var(--cyan); border-radius:99px; padding:.4rem .65rem; color:var(--cyan); background:transparent; font:.56rem var(--mono); }
+@media (max-width:720px) {
+  .lora-training-dialog { width:calc(100vw - 1rem); max-height:95vh; padding:.85rem; border-radius:20px; }
+  .training-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .training-log { max-height:170px; }
+}
+
+@media (max-width: 720px) {
+  .topbar { flex-wrap: wrap; }
+  .top-nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+}
+@media (max-width: 440px) {
+  #open-prompt-store-top { display: none; }
+}
+
+.trained-lora-actions { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
+.trained-lora-actions a { border:1px solid var(--line-hot); border-radius:99px; padding:.4rem .65rem; color:var(--muted); text-decoration:none; font:.56rem var(--mono); }
+.trained-lora-actions a:hover { color:var(--cyan); border-color:var(--cyan); }

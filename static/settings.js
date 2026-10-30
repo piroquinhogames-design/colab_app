@@ -34,11 +34,16 @@ export function restoreLastSettings(settings, dependencies) {
   });
   const maxLoras = Number(state.limits?.maxLoras || 8);
   state.selectedLoras = Array.isArray(settings.loras) ? settings.loras
-    .filter((item) => item && Number.isFinite(Number(item.version_id)) && typeof item.name === 'string')
+    .filter((item) => {
+      if (!item || typeof item.name !== 'string') return false;
+      const remote = Number.isSafeInteger(Number(item.version_id)) && Number(item.version_id) > 0;
+      const local = typeof item.local_file === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors$/.test(item.local_file);
+      return remote || local;
+    })
     .slice(0, maxLoras).map((item) => {
       const rawWeight = Number(item.weight ?? .8);
       const weight = Number.isFinite(rawWeight) ? Math.max(0, Math.min(1.5, rawWeight)) : .8;
-      return { ...item, version_id: Number(item.version_id), model_id: item.model_id ? Number(item.model_id) : null, weight };
+      return { ...item, version_id: item.local_file ? null : Number(item.version_id), model_id: item.model_id ? Number(item.model_id) : null, weight };
     }) : [];
   renderSelectedLoras();
   setMode(settings.mode === 'img2img' ? 'img2img' : 'text2img');

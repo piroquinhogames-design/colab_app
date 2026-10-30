@@ -71,6 +71,7 @@ for directory in (MODELS, LORAS, OUTPUTS, UPLOADS, HF_HUB_CACHE):
     directory.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
+MAX_TRAIN_UPLOAD_BYTES = 200 * 1024 * 1024
 MAX_LORAS = int(os.environ.get("MODELLAB_MAX_LORAS", "8"))
 MODEL_URL = os.environ.get(
     "MODEL_URL", "https://civitai.com/api/download/models/2983680?fileId=2863158"
@@ -336,7 +337,7 @@ def public_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config.update(
     SECRET_KEY=os.environ.get("STUDIO_SECRET") or os.urandom(32),
-    MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
+    MAX_CONTENT_LENGTH=MAX_TRAIN_UPLOAD_BYTES + (2 * 1024 * 1024),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("STUDIO_COOKIE_SECURE", "1") == "1",
@@ -426,10 +427,11 @@ def csrf_required(view: Callable):
 
 @dataclass
 class LoRASelection:
-    version_id: int
+    version_id: int | None
     model_id: int | None
     name: str
     weight: float
+    local_file: str | None = None
 
 
 @dataclass
@@ -868,10 +870,17 @@ class GeneratorEngine:
             update(0, self._vram(), download=100, pipeline=100, phase="preparing_loras")
             lora_names: list[tuple[str, float]] = []
             for selected in job.params.loras:
-                downloaded = self._prepare_lora_file(self._download_lora(selected.version_id, self.comfy.cancel_event.is_set, selected.model_id))
-                job.model_snapshot["loras"].append({"version_id": selected.version_id, "weight": selected.weight,
-                    "sha256": read_json(downloaded.with_suffix(downloaded.suffix + ".verified.json"), {}).get("sha256")})
-                lora_names.append((self.comfy.copy_lora(downloaded), selected.weight))
+                if selected.local_file:
+                    local_path = self.comfy.lora_dir / selected.local_file
+                    if not local_path.is_file() or local_path.is_symlink():
+                        raise RuntimeError(f"LoRA local não encontrada: {selected.local_file}")
+                    lora_names.append((selected.local_file, selected.weight))
+                    job.model_snapshot["loras"].append({"local_file": selected.local_file, "weight": selected.weight})
+                else:
+                    downloaded = self._prepare_lora_file(self._download_lora(selected.version_id, self.comfy.cancel_event.is_set, selected.model_id))
+                    job.model_snapshot["loras"].append({"version_id": selected.version_id, "weight": selected.weight,
+                        "sha256": read_json(downloaded.with_suffix(downloaded.suffix + ".verified.json"), {}).get("sha256")})
+                    lora_names.append((self.comfy.copy_lora(downloaded), selected.weight))
             model_name = self.comfy.register_checkpoint(Path(spec["path"]))
             if job.params.source_image:
                 job.comfy_source = self.comfy.upload_source(Path(job.params.source_image))
@@ -937,7 +946,10 @@ class JobManager:
             raise ValueError("Guidance inválido no manifesto.")
         if not isinstance(params.get("loras", []), list) or len(params.get("loras", [])) > MAX_LORAS: raise ValueError("LoRAs inválidas no manifesto.")
         loras = [LoRASelection(**item) for item in params.get("loras", [])]
-        if any(not isinstance(item.version_id, int) or item.version_id <= 0 or not isinstance(item.weight, (int, float)) or not 0 <= item.weight <= 1.5 for item in loras): raise ValueError("LoRA inválida no manifesto.")
+        if any((item.local_file is None and (not isinstance(item.version_id, int) or item.version_id <= 0)) or
+               (item.local_file is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", item.local_file)) or
+               not isinstance(item.weight, (int, float)) or not 0 <= item.weight <= 1.5 for item in loras):
+            raise ValueError("LoRA inválida no manifesto.")
         completed = data.get("status", "completed") == "completed"
         return Job(
             id=data["id"], created_at=data["created_at"], status=data.get("status", "completed"),
@@ -1184,11 +1196,77 @@ manager = JobManager(archive, engine)
 # Restaura o histórico de imagens do disco na própria inicialização, para que o
 # /api/bootstrap já entregue a galeria sem esperar pela reconexão do MEGA.
 manager.restore_local()
+from lora_training import AnimaLoRATrainer
+training_comfy_was_running = False
+training_shutdown = threading.Event()
+
+
+def finish_lora_training() -> None:
+    global training_comfy_was_running, public_comfy_status
+    try:
+        if training_comfy_was_running and not training_shutdown.is_set():
+            engine.comfy.ensure_running()
+            if public_comfy_status == "paused_for_training":
+                public_comfy_status = "ready"
+    except Exception as exc:
+        if public_comfy_status == "paused_for_training":
+            public_comfy_status = "failed"
+        print(f"[lora-training] Não foi possível reiniciar o ComfyUI automaticamente: {str(exc)[:300]}", flush=True)
+    finally:
+        training_comfy_was_running = False
+        engine.load_lock.release()
+
+
+lora_trainer = AnimaLoRATrainer(on_finish=finish_lora_training)
+
+
+def training_in_progress() -> bool:
+    return lora_trainer.snapshot().get("status") in {"queued", "running"}
+
+
+def shutdown_lora_training() -> None:
+    training_shutdown.set()
+    lora_trainer.cancel()
+
+
 atexit.register(manager.close)
+atexit.register(shutdown_lora_training)
 archive_ready = threading.Event()
 archive_restore_lock = threading.Lock()
 PUBLIC_COMFY_WORKFLOW = ROOT / "integrations" / "ModelLab_SillyTavern.json"
 public_comfy_status = "pending" if os.environ.get("STUDIO_PREPARE_COMFY") == "1" else "disabled"
+training_assets_status = "not_started"
+training_assets_error = None
+training_assets_thread: threading.Thread | None = None
+training_assets_lock = threading.Lock()
+
+
+def prepare_training_assets() -> None:
+    global training_assets_status, training_assets_error, training_assets_thread
+    with training_assets_lock:
+        if training_assets_thread and training_assets_thread.is_alive():
+            return
+        training_assets_status = "preparing"
+        training_assets_error = None
+
+        def worker():
+            global training_assets_status, training_assets_error
+            acquired = engine.load_lock.acquire(timeout=240)
+            if not acquired:
+                training_assets_status = "failed"
+                training_assets_error = "O motor de geração permaneceu ocupado. Tente preparar novamente."
+                return
+            try:
+                engine._load_pipeline(get_model_spec(DEFAULT_MODEL_ID))
+                training_assets_status = "ready"
+            except Exception as exc:
+                training_assets_status = "failed"
+                training_assets_error = str(exc)[:1500]
+            finally:
+                engine.load_lock.release()
+
+        training_assets_thread = threading.Thread(target=worker, name="anima-training-assets", daemon=True)
+        training_assets_thread.start()
 
 
 def initialize_public_comfy() -> None:
@@ -1347,14 +1425,26 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     for candidate in candidates:
         if not isinstance(candidate, dict): raise ValueError("A seleção de LoRA é inválida.")
         try:
-            version_id = int(candidate["version_id"])
+            local_file = candidate.get("local_file")
+            version_id = int(candidate["version_id"]) if local_file is None else None
             model_id = int(candidate["model_id"]) if candidate.get("model_id") else None
             weight = float(candidate.get("weight", 0.8))
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("A seleção de LoRA é inválida.") from exc
-        if version_id <= 0 or not 0 <= weight <= 1.5:
+        if not math.isfinite(weight) or not 0 <= weight <= 1.5:
             raise ValueError("O peso de LoRA deve estar entre 0 e 1,5.")
-        parsed_loras.append(LoRASelection(version_id, model_id, str(candidate.get("name", "LoRA"))[:120], weight))
+        if local_file is not None:
+            local_file = str(local_file)
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", local_file):
+                raise ValueError("Arquivo de LoRA local inválido.")
+            local_path = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "loras" / local_file
+            if not local_path.is_file() or local_path.is_symlink():
+                raise ValueError("A LoRA local selecionada não está instalada.")
+            parsed_loras.append(LoRASelection(None, None, str(candidate.get("name", local_file))[:120], weight, local_file))
+        else:
+            if version_id <= 0:
+                raise ValueError("Versão de LoRA inválida.")
+            parsed_loras.append(LoRASelection(version_id, model_id, str(candidate.get("name", "LoRA"))[:120], weight))
     return GenerationParams(
         prompt=prompt, negative_prompt=str(raw.get("negative_prompt", ""))[:4000], seed=seed,
         steps=steps, guidance=guidance, width=width, height=height, strength=strength,
@@ -1952,13 +2042,18 @@ def prompt_store_image():
 def create_job():
     raw = parse_json(request.form.get("payload"), request.get_json(silent=True) or {})
     source = None
+    if training_in_progress():
+        return jsonify({"error": "O treinamento de LoRA está usando a GPU. Aguarde terminar antes de gerar imagens."}), 409
     upload = request.files.get("image")
     if upload and upload.filename:
         extension = Path(upload.filename).suffix.lower()
         if extension not in {".png", ".jpg", ".jpeg", ".webp"}:
             return jsonify({"error": "A imagem-base deve ser PNG, JPG ou WEBP."}), 400
         source_path = UPLOADS / f"{uuid.uuid4()}{extension}"
-        upload.save(source_path)
+        raw_image = upload.stream.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw_image) > MAX_UPLOAD_BYTES:
+            return jsonify({"error": "A imagem-base excede 16 MB."}), 413
+        source_path.write_bytes(raw_image)
         try:
             with Image.open(source_path) as image:
                 if image.width * image.height > 40_000_000: raise ValueError("Imagem grande demais.")
@@ -2176,6 +2271,7 @@ def batch_jobs():
     payload = request.get_json(silent=True) or {}
     try:
         if not isinstance(payload, dict): raise ValueError("Lote inválido.")
+        if training_in_progress(): raise ValueError("O treinamento de LoRA está usando a GPU. Aguarde terminar.")
         count = int(payload.get("count", 3))
         if not 1 <= count <= 4: raise ValueError("O lote deve conter de 1 a 4 variações.")
         params = validate_params(payload.get("settings"), None)
@@ -2213,6 +2309,155 @@ def clear_model_cache():
         engine.load_lock.release()
 
 
+
+@app.route("/api/lora-training/status")
+@authentication_required
+def lora_training_status():
+    payload = lora_trainer.snapshot()
+    payload["assets_status"] = training_assets_status
+    payload["assets_error"] = training_assets_error
+    return jsonify(payload)
+
+
+@app.route("/api/lora-training/prepare", methods=["POST"])
+@authentication_required
+@csrf_required
+def lora_training_prepare():
+    result = lora_trainer.prepare()
+    prepare_training_assets()
+    return jsonify({"trainer": result, "assets_status": training_assets_status}), 202
+
+
+@app.route("/api/lora-training/dataset", methods=["POST"])
+@authentication_required
+@csrf_required
+def lora_training_dataset():
+    upload = request.files.get("dataset")
+    if not upload or not upload.filename or Path(upload.filename).suffix.lower() != ".zip":
+        return jsonify({"error": "Envie um arquivo ZIP com imagens e legendas .txt."}), 400
+    temporary = UPLOADS / f"dataset-{uuid.uuid4().hex}.zip"
+    try:
+        upload.save(temporary)
+        result = lora_trainer.import_dataset(
+            temporary,
+            request.form.get("name", Path(upload.filename).stem),
+            request.form.get("caption", ""),
+        )
+        return jsonify(result), 201
+    except (ValueError, OSError, zipfile.BadZipFile) as exc:
+        temporary.unlink(missing_ok=True)
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/lora-training/start", methods=["POST"])
+@authentication_required
+@csrf_required
+def lora_training_start():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict) or payload.get("confirm_sfw") is not True:
+        return jsonify({"error": "Confirme que o dataset contém somente material SFW antes de treinar."}), 400
+    with manager.lock:
+        if any(job.status in {"queued", "running"} for job in manager.jobs.values()):
+            return jsonify({"error": "Aguarde as gerações atuais terminarem antes de iniciar o treinamento."}), 409
+    required_training_files = (
+        Path(MODEL_PATH),
+        Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "text_encoders" / "qwen_3_06b_base.safetensors",
+        Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "vae" / "qwen_image_vae.safetensors",
+    )
+    if any(not path.is_file() for path in required_training_files):
+        return jsonify({"error": "Os arquivos do WAI-ANIMA, Qwen3 e VAE ainda não estão prontos. Clique em PREPARAR TREINADOR E MODELO e aguarde."}), 409
+    if not engine.load_lock.acquire(blocking=False):
+        return jsonify({"error": "O motor de geração está ocupado. Tente novamente quando estiver livre."}), 409
+    global training_comfy_was_running, public_comfy_status
+    comfy_was_running = False
+    try:
+        with manager.lock:
+            if any(job.status in {"queued", "running"} for job in manager.jobs.values()):
+                engine.load_lock.release()
+                return jsonify({"error": "Uma geração entrou na fila. Aguarde antes de treinar."}), 409
+        # Free the inference checkpoint from the T4 before allocating the trainer's
+        # weights and optimizer states. The next generation will load it again.
+        comfy_was_running = engine.comfy._reachable()
+        training_comfy_was_running = comfy_was_running
+        if comfy_was_running:
+            if public_comfy_status == "ready":
+                public_comfy_status = "paused_for_training"
+            response = engine.comfy.session.post(
+                f"{engine.comfy.base_url}/free",
+                json={"unload_models": True, "free_memory": True},
+                timeout=30,
+            )
+            response.raise_for_status()
+            engine.comfy.close_process()
+        result = lora_trainer.start(payload)
+        return jsonify(result), 202
+    except (ValueError, TypeError) as exc:
+        if comfy_was_running:
+            try:
+                engine.comfy.ensure_running()
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "ready"
+            except Exception:
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "failed"
+        training_comfy_was_running = False
+        engine.load_lock.release()
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        if comfy_was_running:
+            try:
+                engine.comfy.ensure_running()
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "ready"
+            except Exception:
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "failed"
+        training_comfy_was_running = False
+        engine.load_lock.release()
+        raise
+
+
+@app.route("/api/lora-training/cancel", methods=["POST"])
+@authentication_required
+@csrf_required
+def lora_training_cancel():
+    if lora_trainer.snapshot().get("status") not in {"queued", "running"}:
+        return jsonify({"error": "Não há treinamento ativo."}), 409
+    lora_trainer.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/lora-training/download/<filename>")
+@authentication_required
+def download_trained_lora(filename: str):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", filename):
+        return jsonify({"error": "Nome de arquivo inválido."}), 400
+    if filename not in {item.get("file") for item in lora_trainer.snapshot().get("loras", [])}:
+        return jsonify({"error": "LoRA treinada não encontrada no arquivo do painel."}), 404
+    directory = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "loras"
+    path = directory / filename
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(directory.resolve()):
+        return jsonify({"error": "Arquivo de LoRA indisponível."}), 404
+    return send_file(path, as_attachment=True, download_name=filename, mimetype="application/octet-stream")
+
+
+@app.route("/api/lora-training/loras")
+@authentication_required
+def lora_training_loras():
+    directory = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "loras"
+    items = []
+    for entry in lora_trainer.snapshot().get("loras", []):
+        filename = str(entry.get("file", ""))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", filename):
+            continue
+        path = directory / filename
+        if path.is_symlink() or not path.is_file():
+            continue
+        items.append({"name": path.stem, "file": path.name, "size_mb": round(path.stat().st_size / 1024**2, 2)})
+    return jsonify({"items": items[-50:]})
+
+
+
 @app.route("/api/diagnostics")
 @authentication_required
 def diagnostics():
@@ -2238,7 +2483,7 @@ def health():
 
 @app.errorhandler(413)
 def too_large(_: Any):
-    return jsonify({"error": "A imagem enviada excede 16 MB."}), 413
+    return jsonify({"error": "Arquivo enviado excede o limite permitido (200 MB para ZIPs e 16 MB para imagens)."}), 413
 
 
 if __name__ == "__main__":
