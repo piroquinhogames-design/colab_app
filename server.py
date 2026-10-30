@@ -2343,6 +2343,7 @@ def lora_training_start():
         return jsonify({"error": "Os arquivos do WAI-ANIMA, Qwen3 e VAE ainda não estão prontos. Clique em PREPARAR TREINADOR E MODELO e aguarde."}), 409
     if not engine.load_lock.acquire(blocking=False):
         return jsonify({"error": "O motor de geração está ocupado. Tente novamente quando estiver livre."}), 409
+    comfy_was_running = False
     try:
         with manager.lock:
             if any(job.status in {"queued", "running"} for job in manager.jobs.values()):
@@ -2350,20 +2351,31 @@ def lora_training_start():
                 return jsonify({"error": "Uma geração entrou na fila. Aguarde antes de treinar."}), 409
         # Free the inference checkpoint from the T4 before allocating the trainer's
         # weights and optimizer states. The next generation will load it again.
-        if engine.comfy._reachable():
+        comfy_was_running = engine.comfy._reachable()
+        if comfy_was_running:
             response = engine.comfy.session.post(
                 f"{engine.comfy.base_url}/free",
                 json={"unload_models": True, "free_memory": True},
                 timeout=30,
             )
             response.raise_for_status()
-        engine.comfy.close_process()
+            engine.comfy.close_process()
         result = lora_trainer.start(payload)
         return jsonify(result), 202
     except (ValueError, TypeError) as exc:
+        if comfy_was_running:
+            try:
+                engine.comfy.ensure_running()
+            except Exception:
+                pass
         engine.load_lock.release()
         return jsonify({"error": str(exc)}), 400
     except Exception:
+        if comfy_was_running:
+            try:
+                engine.comfy.ensure_running()
+            except Exception:
+                pass
         engine.load_lock.release()
         raise
 
