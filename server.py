@@ -2430,7 +2430,7 @@ def lora_training_cancel():
 @app.route("/api/lora-training/download/<filename>")
 @authentication_required
 def download_trained_lora(filename: str):
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\\.safetensors", filename):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", filename):
         return jsonify({"error": "Nome de arquivo inválido."}), 400
     if filename not in {item.get("file") for item in lora_trainer.snapshot().get("loras", [])}:
         return jsonify({"error": "LoRA treinada não encontrada no arquivo do painel."}), 404
