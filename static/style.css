@@ -445,6 +445,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .training-progress-rail { height:9px; overflow:hidden; border-radius:99px; background:rgba(255,255,255,.08); }
 .training-progress-rail > div { width:0; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--cyan),var(--acid)); transition:width .25s ease; }
 .training-error { color:#ff8d9a; font:.65rem var(--mono); white-space:pre-wrap; }
+.training-dataset-status { min-height:1.4em; }
+.training-dataset-status.ready { color:var(--acid); }
+.training-dataset-status.error { color:#ff8d9a; }
+.training-form button:disabled { cursor:not-allowed; opacity:.45; filter:saturate(.35); }
 .training-log { max-height:220px; overflow:auto; padding:.8rem; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,.28); color:#b8c5d7; font:.6rem/1.55 var(--mono); white-space:pre-wrap; }
 .trained-lora-list { display:grid; gap:.55rem; margin-top:.7rem; }
 .trained-lora-item { display:flex; align-items:center; justify-content:space-between; gap:.7rem; padding:.65rem .75rem; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.025); }

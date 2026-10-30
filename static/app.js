@@ -26,6 +26,7 @@ const state = {
   models: [],
   presets: [], favorites: new Set(), comparison: new Set(), historyOffset: null, submitKey: null,
   trainingPollTimer: null,
+  trainingDataset: null,
   limits: {maxLoras: 8},
 };
 
@@ -890,10 +891,32 @@ async function refreshTrainingPanel() {
     if ($('#training-loss')) $('#training-loss').textContent = data.loss == null ? 'LOSS --' : 'LOSS ' + Number(data.loss).toFixed(5);
     if ($('#training-log')) $('#training-log').textContent = (data.logs || []).join('\n') || 'O log do treinamento aparecerá aqui.';
     if ($('#training-error')) $('#training-error').textContent = data.error || data.assets_error || '';
+    const datasets = Array.isArray(data.datasets) ? data.datasets : [];
+    const selectedDataset = data.selected_dataset || valueOf('#training-dataset-name');
+    state.trainingDataset = datasets.some(item => item.name === selectedDataset) ? selectedDataset : null;
+    const startButton = $('#start-lora-training');
+    if (startButton) {
+      startButton.disabled = Boolean(data.status && ['queued', 'running'].includes(data.status)) || !state.trainingDataset;
+      startButton.title = state.trainingDataset ? '' : 'Importe um ZIP na etapa 02 antes de iniciar.';
+    }
+    const datasetStatus = $('#training-dataset-status');
+    if (datasetStatus && state.trainingDataset && !datasetStatus.dataset.message) {
+      const current = datasets.find(item => item.name === state.trainingDataset);
+      datasetStatus.textContent = `${state.trainingDataset}: ${current?.images || 0} imagens prontas // ativação: ${current?.trigger_word || valueOf('#training-trigger-word', 'sks_anima')}`;
+      datasetStatus.classList.add('ready');
+    }
     if ($('#cancel-lora-training')) $('#cancel-lora-training').disabled = !['queued', 'running'].includes(data.status);
     await refreshTrainedLoras();
     if (!data.busy && data.assets_status !== 'preparing' && state.trainingPollTimer) { clearInterval(state.trainingPollTimer); state.trainingPollTimer = null; }
   } catch (error) { if ($('#training-error')) $('#training-error').textContent = error.message; }
+}
+function setTrainingDatasetMessage(message, kind = '') {
+  const target = $('#training-dataset-status');
+  if (!target) return;
+  target.textContent = message;
+  target.dataset.message = '1';
+  target.classList.toggle('ready', kind === 'ready');
+  target.classList.toggle('error', kind === 'error');
 }
 
 async function refreshTrainedLoras() {
@@ -938,17 +961,24 @@ function bindEvents() {
   on('#open-lora-training-main', 'click', openLoraTraining);
   on('#close-lora-training', 'click', () => { $('#lora-training-dialog')?.close(); if (state.trainingPollTimer) { clearInterval(state.trainingPollTimer); state.trainingPollTimer = null; } });
   on('#prepare-lora-training', 'click', async () => { try { await api('/api/lora-training/prepare', {method: 'POST'}); toast('Preparação do treinador iniciada. Isso pode levar alguns minutos.'); if (!state.trainingPollTimer) state.trainingPollTimer = setInterval(refreshTrainingPanel, 2500); refreshTrainingPanel(); } catch (error) { toast(error.message, true); } });
+  on('#training-dataset-file', 'change', event => {
+    const file = event.target.files?.[0];
+    state.trainingDataset = null;
+    setTrainingDatasetMessage(file ? `ZIP selecionado: ${file.name} // clique em IMPORTAR DATASET` : 'Selecione um ZIP com imagens e legendas.', '');
+    const startButton = $('#start-lora-training');
+    if (startButton) startButton.disabled = true;
+  });
   on('#lora-dataset-form', 'submit', async event => {
     event.preventDefault(); const file = $('#training-dataset-file')?.files?.[0]; if (!file) { toast('Selecione um arquivo ZIP.', true); return; }
-    const button = $('#upload-training-dataset'); button.disabled = true;
+    const button = $('#upload-training-dataset'); button.disabled = true; setTrainingDatasetMessage(`Importando ${file.name}… isso pode levar alguns minutos.`);
     try { const form = new FormData(); form.set('dataset', file); form.set('name', valueOf('#training-dataset-name')); form.set('caption', valueOf('#training-shared-caption'));
       form.set('trigger_word', valueOf('#training-trigger-word'));
       const result = await api('/api/lora-training/dataset', {method: 'POST', body: form, signal: AbortSignal.timeout(300000)});
-      $('#training-dataset-status').textContent = result.name + ': ' + result.images + ' imagens prontas // ativação: ' + result.trigger_word; toast('Dataset importado com palavra de ativação.');
-    } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
+      state.trainingDataset = result.name; $('#training-dataset-name').value = result.name; setTrainingDatasetMessage(result.name + ': ' + result.images + ' imagens prontas // ativação: ' + result.trigger_word, 'ready'); toast('Dataset importado com palavra de ativação.'); refreshTrainingPanel();
+    } catch (error) { state.trainingDataset = null; setTrainingDatasetMessage('Falha ao importar ZIP: ' + error.message, 'error'); toast(error.message, true); } finally { button.disabled = false; }
   });
   on('#lora-training-form', 'submit', async event => {
-    event.preventDefault(); if (!checkedOf('#training-confirm-sfw')) { toast('Confirme que o dataset é SFW.', true); return; }
+    event.preventDefault(); if (!state.trainingDataset) { toast('Importe o ZIP na etapa 02 antes de iniciar o treinamento.', true); return; } if (!checkedOf('#training-confirm-sfw')) { toast('Confirme que o dataset é SFW.', true); return; }
     const button = $('#start-lora-training'); button.disabled = true;
     try { const result = await api('/api/lora-training/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
       project_name: valueOf('#training-project-name'), dataset: valueOf('#training-dataset-name'), resolution: Number(valueOf('#training-resolution')),
