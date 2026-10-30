@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import uuid
+import urllib.request
 import zipfile
 from PIL import Image
 from datetime import datetime, timezone
@@ -89,15 +90,32 @@ class AnimaLoRATrainer:
                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
         with self.lock:
             self.process = process
+        last_output = ""
         assert process.stdout is not None
         for line in process.stdout:
             if line.strip():
-                self._log(line.rstrip())
+                last_output = line.rstrip()
+                self._log(last_output)
         code = process.wait()
         with self.lock:
             self.process = None
         if code:
-            raise RuntimeError(f"Comando de preparação terminou com código {code}.")
+            detail = f" Última saída: {last_output[:700]}" if last_output else ""
+            raise RuntimeError(f"Comando de preparação terminou com código {code}.{detail}")
+    def _ensure_pip(self, python: str) -> str:
+        pip = VENV / "bin" / "pip"
+        if pip.is_file():
+            return str(pip)
+        bootstrap = TRAIN_ROOT / "get-pip.py"
+        self._log("pip não foi criado pelo venv; usando bootstrap compatível com Colab.")
+        try:
+            urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", bootstrap)
+        except Exception as exc:
+            raise RuntimeError(f"Não foi possível baixar o bootstrap do pip: {exc}") from exc
+        self._run_setup_command([python, str(bootstrap), "--disable-pip-version-check"])
+        if not pip.is_file():
+            raise RuntimeError("O bootstrap terminou, mas o pip não foi criado no ambiente isolado.")
+        return str(pip)
 
     def prepare(self) -> dict[str, Any]:
         with self.lock:
@@ -118,10 +136,13 @@ class AnimaLoRATrainer:
                 self._run_setup_command(["git", "clone", "--depth", "1",
                                          "https://github.com/kohya-ss/sd-scripts.git", str(SCRIPTS)])
             if not (VENV / "bin" / "python").is_file():
-                self._run_setup_command(["python", "-m", "venv", str(VENV)])
+                # O runtime do Colab frequentemente não inclui ensurepip.
+                # Criar o venv sem pip evita essa falha; o bootstrap abaixo
+                # instala o pip somente no ambiente isolado do treinador.
+                self._run_setup_command(["python", "-m", "venv", "--without-pip", str(VENV)])
             python = str(VENV / "bin" / "python")
-            pip = [python, "-m", "pip"]
-            self._run_setup_command(pip + ["install", "--upgrade", "pip"])
+            pip = [self._ensure_pip(python)]
+            self._run_setup_command(pip + ["install", "--upgrade", "pip", "setuptools", "wheel"])
             # Separate environment: never modify Colab/ComfyUI's active torch stack.
             self._run_setup_command(pip + ["install", "torch==2.5.1", "torchvision==0.20.1",
                                            "--index-url", "https://download.pytorch.org/whl/cu124"])
