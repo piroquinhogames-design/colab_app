@@ -473,3 +473,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @media (max-width: 440px) {
   #open-prompt-store-top { display: none; }
 }
+
+.trained-lora-actions { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
+.trained-lora-actions a { border:1px solid var(--line-hot); border-radius:99px; padding:.4rem .65rem; color:var(--muted); text-decoration:none; font:.56rem var(--mono); }
+.trained-lora-actions a:hover { color:var(--cyan); border-color:var(--cyan); }
