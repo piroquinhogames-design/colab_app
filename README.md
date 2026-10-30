@@ -40,6 +40,20 @@ O JSON usa o mesmo TXT→IMG Anima do projeto, com encoder Qwen, VAE, latent de 
 
 O SillyTavern conversa diretamente com ComfyUI: esses pedidos não passam pela fila limitada, histórico, ampliação ou sincronização MEGA do painel. A fila do ComfyUI é compartilhada com as gerações do painel. Cada túnel é recuperado separadamente quando cai, com um novo link; atualize a URL no SillyTavern se o endereço mudar. Parar a célula encerra ambos os túneis e o backend.
 
+## Treinamento de LoRAs Anima
+
+O botão **TREINAR LoRA** abre o fluxo de treinamento no próprio painel. O treinador usa o script nativo `anima_train_network.py` do projeto `sd-scripts`, com o WAI-ANIMA v1.0, encoder Qwen3 e Qwen-Image VAE já utilizados pelo ComfyUI.
+
+1. Prepare o treinador e os arquivos do modelo. As dependências de treino ficam em `STUDIO_ROOT/lora-training/venv`, isoladas do PyTorch do Colab e do ComfyUI.
+2. Envie um ZIP de até 200 MB com imagens PNG/JPG/WEBP e legendas `.txt` com o mesmo nome-base. Se as imagens não tiverem legendas individuais, o painel pode aplicar uma legenda comum.
+3. Defina nome, resolução (512/640/768), rank, épocas, repeats e learning rate. Confirme que o dataset é exclusivamente SFW.
+4. Acompanhe estado, passos, loss e logs. O treinamento pode ser cancelado pelo painel.
+5. Ao terminar, o arquivo `.safetensors` é copiado para `COMFY_ROOT/models/loras` e aparece na lista de LoRAs treinadas. Use **CONECTAR AO RACK** para aplicá-lo nas próximas gerações.
+
+O perfil de memória T4 usa FP16 (T4 não oferece BF16 nativo), batch size 1, AdamW8bit, gradient checkpointing, cache de latents e saídas do encoder, VAE 2D e block swapping H2D-only. Antes do treino, o painel libera a VRAM do ComfyUI; a próxima geração recarrega o checkpoint normalmente. A instalação do treinador não altera as dependências de inferência.
+
+O limite de 200 MB vale para o ZIP; o conteúdo descompactado é limitado a 768 MB e 3000 arquivos. Imagens acima de 24 megapixels são recusadas. O checkbox SFW é uma confirmação do operador, não um classificador automático de conteúdo. Treinamento real exige uma sessão Colab com GPU CUDA compatível; os testes locais não simulam uma T4 nem garantem duração ou qualidade do resultado.
+
 ## Recursos
 
 - TXT→IMG e workflow IMG→IMG com intensidade configurável; decode VAE em tiles e ampliação Lanczos de 1,5×/2× após gerar.
