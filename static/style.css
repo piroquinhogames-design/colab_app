@@ -465,3 +465,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .training-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .training-log { max-height:170px; }
 }
+
+@media (max-width: 720px) {
+  .topbar { flex-wrap: wrap; }
+  .top-nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+}
+@media (max-width: 440px) {
+  #open-prompt-store-top { display: none; }
+}
