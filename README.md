@@ -50,7 +50,7 @@ O botão **TREINAR LoRA** abre o fluxo de treinamento no próprio painel. O trei
 4. Acompanhe estado, passos, loss e logs. O treinamento pode ser cancelado pelo painel.
 5. Ao terminar, o arquivo `.safetensors` é copiado para `COMFY_ROOT/models/loras` e aparece na lista de LoRAs treinadas. Use **CONECTAR AO RACK** para aplicá-lo nas próximas gerações.
 
-O perfil de memória T4 usa FP16 (T4 não oferece BF16 nativo), batch size 1, AdamW8bit, gradient checkpointing, cache de latents e saídas do encoder, VAE 2D e block swapping H2D-only. Antes do treino, o painel libera a VRAM do ComfyUI; a próxima geração recarrega o checkpoint normalmente. A instalação do treinador não altera as dependências de inferência.
+O perfil de memória T4 usa FP16 (T4 não oferece BF16 nativo), batch size 1, AdamW8bit, gradient checkpointing, cache de latents e saídas do encoder, VAE 2D e block swapping H2D-only. Antes do treino, o painel libera a VRAM e pausa o processo ComfyUI para evitar disputa pela T4; a próxima geração reinicia o backend e recarrega o checkpoint. Se o túnel ComfyUI externo tiver sido habilitado, ele ficará indisponível enquanto o processo estiver pausado. A instalação do treinador não altera as dependências de inferência.
 
 O limite de 200 MB vale para o ZIP; o conteúdo descompactado é limitado a 768 MB e 3000 arquivos. Imagens acima de 24 megapixels são recusadas. O checkbox SFW é uma confirmação do operador, não um classificador automático de conteúdo. Treinamento real exige uma sessão Colab com GPU CUDA compatível; os testes locais não simulam uma T4 nem garantem duração ou qualidade do resultado.
 
