@@ -18,7 +18,7 @@ from typing import Any, Callable
 from studio_storage import atomic_json, read_json
 
 ROOT = Path(os.environ.get("STUDIO_ROOT", "/content/modellab-studio")).resolve()
-COMFY_ROOT = Path(os.environ.get("COMFY_ROOT", ROOT)).resolve()
+COMFY_ROOT = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")).resolve()
 TRAIN_ROOT = ROOT / "lora-training"
 DATASETS = TRAIN_ROOT / "datasets"
 OUTPUTS = TRAIN_ROOT / "output"
@@ -161,6 +161,9 @@ class AnimaLoRATrainer:
         DATASETS.mkdir(parents=True, exist_ok=True)
         destination = DATASETS / name
         temporary = DATASETS / (name + ".tmp-" + uuid.uuid4().hex)
+        if destination.exists():
+            archive_path.unlink(missing_ok=True)
+            raise ValueError("Já existe um dataset com esse nome. Escolha outro nome para evitar sobrescrever seus dados.")
         temporary.mkdir()
         try:
             with zipfile.ZipFile(archive_path) as archive:
@@ -203,8 +206,6 @@ class AnimaLoRATrainer:
                 raise ValueError(f"{len(missing)} imagem(ns) estão sem legenda .txt. Inclua as legendas no ZIP ou informe uma legenda comum.")
             for image in missing:
                 image.with_suffix(".txt").write_text(caption, encoding="utf-8")
-            if destination.exists():
-                shutil.rmtree(destination)
             temporary.rename(destination)
             result = {"name": name, "images": len(images), "captions": len(images), "path": str(destination)}
             with self.lock:
@@ -247,8 +248,9 @@ class AnimaLoRATrainer:
             steps = len(images) * repeats * epochs
             if steps > 1200 and not payload.get("confirm_long_run"):
                 raise ValueError(f"Estimativa de {steps} passos. Confirme a execução longa ou reduza épocas/repeats.")
-            output = OUTPUTS / project
-            output.mkdir(parents=True, exist_ok=True)
+            run_id = uuid.uuid4().hex[:12]
+            output = OUTPUTS / f"{project}-{run_id}"
+            output.mkdir(parents=True, exist_ok=False)
             config_path = CONFIGS / f"{project}-dataset.toml"
             CONFIGS.mkdir(parents=True, exist_ok=True)
             import toml
@@ -284,7 +286,6 @@ class AnimaLoRATrainer:
                 "--qwen_image_vae_2d", "--blocks_to_swap", "12", "--block_swap_h2d_only",
                 "--max_data_loader_n_workers", "0",
             ]
-            run_id = uuid.uuid4().hex[:12]
             self.cancel_requested.clear()
             self.state.update({"status": "queued", "run_id": run_id, "project_name": project,
                                "dataset": dataset_name, "progress": 0, "current_step": 0,
@@ -311,6 +312,8 @@ class AnimaLoRATrainer:
                                            stderr=subprocess.STDOUT, text=True, bufsize=1)
                 with self.lock:
                     self.process = process
+                if self.cancel_requested.is_set() and process.poll() is None:
+                    process.terminate()
                 assert process.stdout is not None
                 for raw in process.stdout:
                     line = raw.rstrip()
@@ -345,6 +348,8 @@ class AnimaLoRATrainer:
             comfy_loras = COMFY_ROOT / "models" / "loras"
             comfy_loras.mkdir(parents=True, exist_ok=True)
             target = comfy_loras / f"{project}.safetensors"
+            if target.exists():
+                target = comfy_loras / f"{project[:34]}-{self.state.get('run_id', uuid.uuid4().hex[:12])}.safetensors"
             shutil.copy2(files[0], target)
             with self.lock:
                 loras = [item for item in self.state.get("loras", []) if item.get("file") != target.name]
