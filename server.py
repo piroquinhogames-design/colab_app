@@ -1197,15 +1197,40 @@ manager = JobManager(archive, engine)
 # /api/bootstrap já entregue a galeria sem esperar pela reconexão do MEGA.
 manager.restore_local()
 from lora_training import AnimaLoRATrainer
-lora_trainer = AnimaLoRATrainer(on_finish=engine.load_lock.release)
+training_comfy_was_running = False
+training_shutdown = threading.Event()
+
+
+def finish_lora_training() -> None:
+    global training_comfy_was_running, public_comfy_status
+    try:
+        if training_comfy_was_running and not training_shutdown.is_set():
+            engine.comfy.ensure_running()
+            if public_comfy_status == "paused_for_training":
+                public_comfy_status = "ready"
+    except Exception as exc:
+        if public_comfy_status == "paused_for_training":
+            public_comfy_status = "failed"
+        print(f"[lora-training] Não foi possível reiniciar o ComfyUI automaticamente: {str(exc)[:300]}", flush=True)
+    finally:
+        training_comfy_was_running = False
+        engine.load_lock.release()
+
+
+lora_trainer = AnimaLoRATrainer(on_finish=finish_lora_training)
 
 
 def training_in_progress() -> bool:
     return lora_trainer.snapshot().get("status") in {"queued", "running"}
 
 
+def shutdown_lora_training() -> None:
+    training_shutdown.set()
+    lora_trainer.cancel()
+
+
 atexit.register(manager.close)
-atexit.register(lora_trainer.cancel)
+atexit.register(shutdown_lora_training)
 archive_ready = threading.Event()
 archive_restore_lock = threading.Lock()
 PUBLIC_COMFY_WORKFLOW = ROOT / "integrations" / "ModelLab_SillyTavern.json"
@@ -2343,6 +2368,7 @@ def lora_training_start():
         return jsonify({"error": "Os arquivos do WAI-ANIMA, Qwen3 e VAE ainda não estão prontos. Clique em PREPARAR TREINADOR E MODELO e aguarde."}), 409
     if not engine.load_lock.acquire(blocking=False):
         return jsonify({"error": "O motor de geração está ocupado. Tente novamente quando estiver livre."}), 409
+    global training_comfy_was_running, public_comfy_status
     comfy_was_running = False
     try:
         with manager.lock:
@@ -2352,7 +2378,10 @@ def lora_training_start():
         # Free the inference checkpoint from the T4 before allocating the trainer's
         # weights and optimizer states. The next generation will load it again.
         comfy_was_running = engine.comfy._reachable()
+        training_comfy_was_running = comfy_was_running
         if comfy_was_running:
+            if public_comfy_status == "ready":
+                public_comfy_status = "paused_for_training"
             response = engine.comfy.session.post(
                 f"{engine.comfy.base_url}/free",
                 json={"unload_models": True, "free_memory": True},
@@ -2366,16 +2395,24 @@ def lora_training_start():
         if comfy_was_running:
             try:
                 engine.comfy.ensure_running()
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "ready"
             except Exception:
-                pass
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "failed"
+        training_comfy_was_running = False
         engine.load_lock.release()
         return jsonify({"error": str(exc)}), 400
     except Exception:
         if comfy_was_running:
             try:
                 engine.comfy.ensure_running()
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "ready"
             except Exception:
-                pass
+                if public_comfy_status == "paused_for_training":
+                    public_comfy_status = "failed"
+        training_comfy_was_running = False
         engine.load_lock.release()
         raise
 
