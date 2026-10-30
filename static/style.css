@@ -179,22 +179,10 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: ew-resize;
 .history-card::after { content: ""; position: absolute; z-index: 2; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: inset 0 1px 0 rgba(255,255,255,.09); }
 .history-card img { width: 100%; aspect-ratio: 1 / 1; display: block; object-fit: cover; filter: saturate(.9) contrast(1.04); transition: transform .55s var(--ease-liquid), filter .45s ease; }
 .history-card:hover img { transform: scale(1.06); filter: saturate(1.15) contrast(1.08); }
-.history-card:hover .history-overlay { opacity: 1; transform: translateY(0); }
 .history-meta { padding: .7rem .75rem; font: .55rem var(--mono); }
 .history-meta strong { display: block; color: var(--cyan); font-weight: 500; }
 .history-meta span { display: block; margin-top: .25rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .history-meta span:nth-of-type(1) { color: #c6ccdc; font-size: .51rem; }
-.history-overlay { position: absolute; z-index: 3; display: flex; align-items: end; justify-content: space-between; inset: 0 0 44px; padding: .78rem; opacity: 0; background: linear-gradient(transparent 30%, rgba(6,7,11,.9)); transform: translateY(12%); transition: opacity .3s ease, transform .4s var(--ease-liquid); }
-.history-overlay p { max-width: 48%; margin: 0; color: #fff; font: .58rem var(--mono); line-height: 1.35; }
-.history-actions-row { display: flex; align-items: center; gap: .35rem; }
-.history-icon-button { display: inline-grid; place-items: center; width: 30px; height: 30px; border: 1px solid rgba(167,217,255,.7); border-radius: 50%; color: var(--cyan); background: rgba(8,10,17,.72); font: .84rem var(--mono); line-height: 1; transition: transform .25s var(--ease-liquid), color .2s ease, background .2s ease, border-color .2s ease; }
-.history-icon-button:hover { color: #111525; background: var(--cyan); transform: translateY(-2px); }
-.history-icon-button.remix { border-color: rgba(241,169,223,.72); color: var(--pink); }
-.history-icon-button.remix:hover { color: #241523; background: var(--pink); }
-.history-icon-button.delete { border-color: rgba(255,157,169,.72); color: var(--danger); }
-.history-icon-button.delete:hover { color: #2a1118; background: var(--danger); }
-.download-link { display: inline-grid; place-items: center; width: 30px; height: 30px; color: #111525; background: var(--acid); border-radius: 50%; text-decoration: none; font: .7rem var(--mono); transition: transform .25s var(--ease-liquid), filter .2s ease; }
-.download-link:hover { filter: brightness(1.1); transform: translateY(-2px) rotate(-8deg); }
 .empty-history { grid-column: 1 / -1; min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--line); border-radius: 24px; color: var(--muted); font: .72rem var(--mono); text-align: center; background: rgba(255,255,255,.02); }
 .empty-history span { color: var(--violet); font-size: 2rem; }
 
@@ -381,7 +369,6 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: ew-resize;
 
   .history-card:hover img,
   .prompt-card:hover .prompt-card-preview img,
-  .history-icon-button:hover,
   .catalog-card button:hover,
   .civitai-link:hover,
   .prompt-card button:hover {

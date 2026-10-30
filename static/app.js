@@ -542,7 +542,6 @@ async function loadPromptStore({append = false, random = false} = {}) {
 }
 
 function imageCard(job) {
-  const prompt = job.params?.prompt || '';
   const loras = (job.params?.loras || []).map((item) => item.name).join(', ') || 'checkpoint puro';
   const mode = job.params?.mode === 'img2img' ? 'IMG→IMG' : 'TXT→IMG';
   const editLevel = job.params?.mode === 'img2img' ? ` // ${({'low': 'BAIXO', 'medium': 'MÉDIO', 'high': 'ALTO'})[job.params?.edit_level] || 'MÉDIO'}` : '';
@@ -553,7 +552,6 @@ function imageCard(job) {
   const jobId = encodeURIComponent(job.id);
   return `<article class="history-card" data-history-id="${jobId}">
     <img loading="lazy" decoding="async" data-fullscreen="${jobId}" src="/api/history/${jobId}/thumbnail" alt="Resultado com seed ${escapeHtml(job.params?.seed)}" />
-    <div class="history-overlay"><p title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</p><div class="history-actions-row"><button class="history-icon-button" data-fullscreen="${jobId}" type="button" title="Tela cheia" aria-label="Abrir imagem em tela cheia">⛶</button><button class="history-icon-button remix" data-remix-history="${jobId}" type="button" title="Remixar materiais" aria-label="Remixar esta imagem">⟳</button><button class="history-icon-button delete" data-delete-history="${jobId}" type="button" title="Excluir do histórico e do MEGA" aria-label="Excluir esta imagem">⌫</button><a class="download-link" href="/api/history/${jobId}/image?download=1" title="Baixar PNG">↓</a></div></div>
     <div class="history-extra"><label><input type="checkbox" data-compare="${jobId}" ${state.comparison.has(job.id) ? 'checked' : ''} /> Comparar</label><button type="button" class="text-button" data-favorite="${jobId}" aria-pressed="${state.favorites.has(job.id)}">${state.favorites.has(job.id) ? '★' : '☆'} Favorito</button><button type="button" class="text-button" data-edit-image="${jobId}">EDITAR IMAGEM</button><a href="/api/history/${jobId}/export">BAIXAR PACK</a><span>${job.mega_synced ? 'MEGA sincronizado' : escapeHtml(job.sync_status === 'uploading' ? 'Enviando ao MEGA' : 'MEGA pendente')}</span>${!job.mega_synced ? `<button type="button" data-retry-sync="${jobId}">REENVIAR</button>` : ''}</div><div class="history-meta"><strong>SEED ${escapeHtml(job.params?.seed)} // ${escapeHtml(model)}</strong><span>${escapeHtml(settings)}</span><span>${escapeHtml(loras)} // ${escapeHtml(formatDate(job.completed_at || job.created_at))}</span></div>
   </article>`;
 }
