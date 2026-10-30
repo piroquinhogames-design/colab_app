@@ -97,10 +97,10 @@ class StudioContracts(unittest.TestCase):
             response = self.client.post('/api/model-profile', json={'version_id': 123, 'civitai_model_id': 456}, headers=self.headers)
         self.assertEqual(response.status_code, 400)
 
-    def test_lora_error_identifies_resource_and_base(self):
+    def test_lora_from_another_base_is_allowed_for_manual_selection(self):
         data = version(kind='LORA', base='Illustrious')
-        with self.assertRaisesRegex(ValueError, 'LORA 123 .*Illustrious.*Anima'):
-            model_file(data, kind='LORA')
+        result = model_file(data, kind='LORA')
+        self.assertEqual(result['file_id'], 789)
 
     def test_catalog_search_keeps_only_compatible_versions(self):
         response = unittest.mock.Mock()

@@ -40,7 +40,10 @@ def model_file(data: dict[str, Any], *, kind: str, model_id: int | None = None, 
     actual_kind = str((data.get("model") or {}).get("type") or data.get("modelType") or "").lower()
     if actual_kind != kind.lower():
         raise ValueError(f"O recurso selecionado não é {kind}.")
-    if "anima" not in str(data.get("baseModel", "")).lower():
+    # Checkpoints do pipeline Anima continuam restritos à base Anima. LoRAs
+    # ficam liberadas para escolha manual: alguns adaptadores multi-base ou
+    # versões Illustrious/SDXL ainda podem ser usados pelo usuário de propósito.
+    if kind.lower() == "checkpoint" and "anima" not in str(data.get("baseModel", "")).lower():
         raise ValueError(f"{kind} {data.get('id')} ({(data.get('model') or {}).get('name') or data.get('name') or 'sem nome'}): base {data.get('baseModel') or 'não informada'} incompatível com Anima. Selecione uma versão Anima desse recurso ou remova-o da seleção.")
     files = [item for item in data.get("files", []) if isinstance(item, dict)
              and str(item.get("type", "")).lower() == "model"
