@@ -2335,6 +2335,19 @@ def lora_training_start():
     if not engine.load_lock.acquire(blocking=False):
         return jsonify({"error": "O motor de geração está ocupado. Tente novamente quando estiver livre."}), 409
     try:
+        with manager.lock:
+            if any(job.status in {"queued", "running"} for job in manager.jobs.values()):
+                engine.load_lock.release()
+                return jsonify({"error": "Uma geração entrou na fila. Aguarde antes de treinar."}), 409
+        # Free the inference checkpoint from the T4 before allocating the trainer's
+        # weights and optimizer states. The next generation will load it again.
+        if engine.comfy._reachable():
+            response = engine.comfy.session.post(
+                f"{engine.comfy.base_url}/free",
+                json={"unload_models": True, "free_memory": True},
+                timeout=30,
+            )
+            response.raise_for_status()
         result = lora_trainer.start(payload)
         return jsonify(result), 202
     except (ValueError, TypeError) as exc:
