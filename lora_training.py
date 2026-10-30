@@ -34,6 +34,7 @@ MAX_UNPACKED = 768 * 1024 * 1024
 MAX_FILES = 3000
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}$")
+SAFE_TRIGGER = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$")
 
 
 def _now() -> str:
@@ -44,6 +45,11 @@ def _name(value: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-_")
     if not SAFE_NAME.fullmatch(cleaned):
         raise ValueError("Use um nome de 2 a 48 caracteres: letras, números, hífen ou sublinhado.")
+    return cleaned
+def _trigger(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value or "").strip()).strip("_")
+    if not SAFE_TRIGGER.fullmatch(cleaned):
+        raise ValueError("A palavra de ativação deve ter de 2 a 64 caracteres: letras, números, hífen ou sublinhado.")
     return cleaned
 
 
@@ -144,10 +150,16 @@ class AnimaLoRATrainer:
             pip = [self._ensure_pip(python)]
             self._run_setup_command(pip + ["install", "--upgrade", "pip", "setuptools", "wheel"])
             # Separate environment: never modify Colab/ComfyUI's active torch stack.
-            self._run_setup_command(pip + ["install", "torch==2.5.1", "torchvision==0.20.1",
-                                           "--index-url", "https://download.pytorch.org/whl/cu124"])
+            torch_index = os.environ.get("TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu124")
+            self._run_setup_command(pip + ["install", "torch", "torchvision", "--index-url", torch_index])
+            versions = subprocess.run(
+                [python, "-c", "import importlib.metadata as m; print(m.version('torch')); print(m.version('torchvision'))"],
+                capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            if len(versions) < 2:
+                raise RuntimeError("Não foi possível identificar as versões instaladas de torch e torchvision.")
             constraints = TRAIN_ROOT / "constraints.txt"
-            constraints.write_text("torch==2.5.1\ntorchvision==0.20.1\n", encoding="utf-8")
+            constraints.write_text(f"torch=={versions[0].strip()}\ntorchvision=={versions[1].strip()}\n", encoding="utf-8")
             self._run_setup_command(pip + ["install", "-r", str(SCRIPTS / "requirements.txt"),
                                            "-c", str(constraints)], cwd=SCRIPTS)
             self._run_setup_command(pip + ["install", "bitsandbytes>=0.45,<1", "accelerate>=1.2"])
@@ -175,7 +187,7 @@ class AnimaLoRATrainer:
                                 capture_output=True, text=True)
         return result.stdout.strip() if result.returncode == 0 else "unknown"
 
-    def import_dataset(self, archive_path: Path, dataset_name: str, shared_caption: str = "") -> dict[str, Any]:
+    def import_dataset(self, archive_path: Path, dataset_name: str, shared_caption: str = "", trigger_word: str = "sks_anima") -> dict[str, Any]:
         if archive_path.stat().st_size > MAX_ARCHIVE:
             archive_path.unlink(missing_ok=True)
             raise ValueError("O ZIP excede o limite de 200 MB.")
@@ -222,17 +234,26 @@ class AnimaLoRATrainer:
                         image.verify()
                 except Exception as exc:
                     raise ValueError("Imagem inválida no dataset: " + image_path.name) from exc
+            trigger = _trigger(trigger_word or "sks_anima")
             caption = str(shared_caption or "").strip()[:1500]
             missing = [p for p in images if not p.with_suffix(".txt").exists()]
             if missing and not caption:
-                raise ValueError(f"{len(missing)} imagem(ns) estão sem legenda .txt. Inclua as legendas no ZIP ou informe uma legenda comum.")
+                caption = trigger
             for image in missing:
                 image.with_suffix(".txt").write_text(caption, encoding="utf-8")
+            for image in images:
+                caption_path = image.with_suffix(".txt")
+                current = caption_path.read_text(encoding="utf-8").strip()
+                if not current:
+                    current = trigger
+                if not current.lower().startswith(trigger.lower()):
+                    current = f"{trigger}, {current}"
+                caption_path.write_text(current[:1500], encoding="utf-8")
             temporary.rename(destination)
-            result = {"name": name, "images": len(images), "captions": len(images), "path": str(destination)}
+            result = {"name": name, "images": len(images), "captions": len(images), "trigger_word": trigger, "path": str(destination)}
             with self.lock:
                 datasets = [item for item in self.state.get("datasets", []) if item.get("name") != name]
-                datasets.append({k: result[k] for k in ("name", "images", "captions")})
+                datasets.append({k: result[k] for k in ("name", "images", "captions", "trigger_word")})
                 self.state["datasets"] = datasets[-30:]
                 self.state["selected_dataset"] = name
                 self._persist()

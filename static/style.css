@@ -430,6 +430,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .training-section-head > span { color:var(--muted); font:.58rem var(--mono); }
 .training-form { display:grid; gap:.75rem; margin-top:.8rem; }
 .training-form > label, .training-fields label { display:grid; gap:.35rem; color:var(--muted); font:.62rem var(--mono); }
+.training-form .field-help { color:var(--muted); font:.52rem/1.45 var(--mono); letter-spacing:0; }
 .training-form input:not([type=checkbox]), .training-form select, .training-form textarea {
   width:100%; min-width:0; padding:.7rem .75rem; color:var(--ink);
   border:1px solid var(--line); border-radius:12px; background:rgba(4,7,13,.65);

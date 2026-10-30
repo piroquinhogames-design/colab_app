@@ -2342,6 +2342,7 @@ def lora_training_dataset():
             temporary,
             request.form.get("name", Path(upload.filename).stem),
             request.form.get("caption", ""),
+            request.form.get("trigger_word", "sks_anima"),
         )
         return jsonify(result), 201
     except (ValueError, OSError, zipfile.BadZipFile) as exc:

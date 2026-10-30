@@ -942,8 +942,9 @@ function bindEvents() {
     event.preventDefault(); const file = $('#training-dataset-file')?.files?.[0]; if (!file) { toast('Selecione um arquivo ZIP.', true); return; }
     const button = $('#upload-training-dataset'); button.disabled = true;
     try { const form = new FormData(); form.set('dataset', file); form.set('name', valueOf('#training-dataset-name')); form.set('caption', valueOf('#training-shared-caption'));
+      form.set('trigger_word', valueOf('#training-trigger-word'));
       const result = await api('/api/lora-training/dataset', {method: 'POST', body: form, signal: AbortSignal.timeout(300000)});
-      $('#training-dataset-status').textContent = result.name + ': ' + result.images + ' imagens e legendas prontas.'; toast('Dataset importado.');
+      $('#training-dataset-status').textContent = result.name + ': ' + result.images + ' imagens prontas // ativação: ' + result.trigger_word; toast('Dataset importado com palavra de ativação.');
     } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
   });
   on('#lora-training-form', 'submit', async event => {

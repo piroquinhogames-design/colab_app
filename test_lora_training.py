@@ -45,16 +45,21 @@ class DatasetImportTests(unittest.TestCase):
 
     def test_shared_caption_is_created_for_images_without_txt(self):
         archive = self.make_zip([("sample.png", self.png_bytes())])
-        result = self.trainer.import_dataset(archive, "sample-set", "a blue bird")
+        result = self.trainer.import_dataset(archive, "sample-set", "a blue bird", "my_trigger")
         self.assertEqual(result["images"], 1)
         self.assertEqual(result["captions"], 1)
-        self.assertEqual((self.datasets / "sample-set" / "sample.txt").read_text(), "a blue bird")
+        self.assertEqual(result["trigger_word"], "my_trigger")
+        self.assertEqual((self.datasets / "sample-set" / "sample.txt").read_text(), "my_trigger, a blue bird")
 
-    def test_missing_caption_is_rejected_without_shared_caption(self):
+    def test_missing_caption_uses_trigger_word(self):
         archive = self.make_zip([("sample.png", self.png_bytes())])
-        with self.assertRaisesRegex(ValueError, "sem legenda"):
-            self.trainer.import_dataset(archive, "missing-caption")
-        self.assertFalse((self.datasets / "missing-caption").exists())
+        self.trainer.import_dataset(archive, "missing-caption", trigger_word="character_x")
+        self.assertEqual((self.datasets / "missing-caption" / "sample.txt").read_text(), "character_x")
+
+    def test_existing_caption_is_prefixed_once(self):
+        archive = self.make_zip([("sample.png", self.png_bytes()), ("sample.txt", "portrait, smiling")])
+        self.trainer.import_dataset(archive, "prefixed", trigger_word="char_a")
+        self.assertEqual((self.datasets / "prefixed" / "sample.txt").read_text(), "char_a, portrait, smiling")
 
     def test_path_traversal_is_rejected(self):
         archive = self.make_zip([("../escape.png", self.png_bytes())])

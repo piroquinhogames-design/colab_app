@@ -181,8 +181,9 @@
         <div class="training-section-head"><h3>02 // DATASET</h3><span>ZIP • ATÉ 200 MB</span></div>
         <form id="lora-dataset-form" class="training-form">
           <label>Nome do dataset<input id="training-dataset-name" name="name" maxlength="48" placeholder="ex.: meu-dataset" required /></label>
+          <label>Palavra de ativação<input id="training-trigger-word" name="trigger_word" maxlength="64" value="sks_anima" pattern="[A-Za-z0-9][A-Za-z0-9_-]{1,63}" required /><small class="field-help">Será adicionada no início de cada legenda. Use esta palavra no prompt para ativar a LoRA.</small></label>
           <label>Arquivo ZIP<input id="training-dataset-file" name="dataset" type="file" accept=".zip,application/zip" required /></label>
-          <label>Legenda comum (opcional)<textarea id="training-shared-caption" name="caption" rows="2" maxlength="1500" placeholder="Usada apenas nas imagens que não possuem arquivo .txt correspondente."></textarea></label>
+          <label>Legenda comum / tags (opcional)<textarea id="training-shared-caption" name="caption" rows="2" maxlength="1500" placeholder="Ex.: character, portrait, white hair. Usada nas imagens sem .txt."></textarea><small class="field-help">As legendas .txt existentes são preservadas e recebem a palavra de ativação automaticamente.</small></label>
           <button class="subtle-button" type="submit" id="upload-training-dataset">IMPORTAR DATASET</button>
         </form>
         <p id="training-dataset-status" class="settings-help">Organize o ZIP com imagens e arquivos .txt de mesmo nome. Cada imagem precisa de uma legenda.</p>
