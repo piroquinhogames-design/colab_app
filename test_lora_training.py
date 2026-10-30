@@ -62,9 +62,10 @@ class DatasetImportTests(unittest.TestCase):
             self.trainer.import_dataset(archive, "unsafe")
         self.assertFalse((self.root / "escape.png").exists())
 
-    def test_invalid_project_name_is_rejected(self):
+    def test_project_names_are_normalized_without_path_components(self):
+        self.assertEqual(lora_training._name("../unsafe name"), "unsafe-name")
         with self.assertRaisesRegex(ValueError, "2 a 48 caracteres"):
-            lora_training._name("../unsafe name")
+            lora_training._name("")
 
 
 if __name__ == "__main__":
