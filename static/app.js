@@ -937,6 +937,7 @@ function bindEvents() {
   on('#catalog-adult', 'change', () => { state.catalogCursor = null; const next = $('#next-catalog'); if (next) next.disabled = true; loadCatalog(); });
   on('#next-catalog', 'click', () => loadCatalog({append: true}));
   on('#open-lora-training', 'click', openLoraTraining);
+  on('#open-lora-training-main', 'click', openLoraTraining);
   on('#close-lora-training', 'click', () => { $('#lora-training-dialog')?.close(); if (state.trainingPollTimer) { clearInterval(state.trainingPollTimer); state.trainingPollTimer = null; } });
   on('#prepare-lora-training', 'click', async () => { try { await api('/api/lora-training/prepare', {method: 'POST'}); toast('Preparação do treinador iniciada. Isso pode levar alguns minutos.'); if (!state.trainingPollTimer) state.trainingPollTimer = setInterval(refreshTrainingPanel, 2500); refreshTrainingPanel(); } catch (error) { toast(error.message, true); } });
   on('#lora-dataset-form', 'submit', async event => {
