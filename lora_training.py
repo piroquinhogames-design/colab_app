@@ -129,7 +129,7 @@ class AnimaLoRATrainer:
             constraints.write_text("torch==2.5.1\ntorchvision==0.20.1\n", encoding="utf-8")
             self._run_setup_command(pip + ["install", "-r", str(SCRIPTS / "requirements.txt"),
                                            "-c", str(constraints)], cwd=SCRIPTS)
-            self._run_setup_command(pip + ["install", "bitsandbytes>=0.45,<1", "accelerate>=1.2", "toml"])
+            self._run_setup_command(pip + ["install", "bitsandbytes>=0.45,<1", "accelerate>=1.2"])
             check = subprocess.run(
                 [python, "-c", "import torch; assert torch.cuda.is_available(); print(torch.__version__, torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))"],
                 capture_output=True, text=True, timeout=45,
@@ -254,14 +254,23 @@ class AnimaLoRATrainer:
             output.mkdir(parents=True, exist_ok=False)
             config_path = CONFIGS / f"{project}-dataset.toml"
             CONFIGS.mkdir(parents=True, exist_ok=True)
-            import toml
-            dataset_config = {
-                "general": {"resolution": resolution, "enable_bucket": True, "bucket_no_upscale": False,
-                            "bucket_reso_steps": 64, "min_bucket_reso": 256, "max_bucket_reso": 1536},
-                "datasets": [{"resolution": resolution, "subsets": [{"image_dir": str(dataset),
-                    "num_repeats": repeats, "caption_extension": ".txt", "shuffle_caption": False}]}],
-            }
-            config_path.write_text(toml.dumps(dataset_config), encoding="utf-8")
+            dataset_config = (
+                "[general]\\n"
+                f"resolution = {resolution}\\n"
+                "enable_bucket = true\\n"
+                "bucket_no_upscale = false\\n"
+                "bucket_reso_steps = 64\\n"
+                "min_bucket_reso = 256\\n"
+                "max_bucket_reso = 1536\\n\\n"
+                "[[datasets]]\\n"
+                f"resolution = {resolution}\\n\\n"
+                "[[datasets.subsets]]\\n"
+                f"image_dir = {json.dumps(str(dataset))}\\n"
+                f"num_repeats = {repeats}\\n"
+                'caption_extension = ".txt"\\n'
+                "shuffle_caption = false\\n"
+            )
+            config_path.write_text(dataset_config, encoding="utf-8")
             model_path = Path(os.environ.get("MODEL_PATH", ROOT / "models/diffusion_models/WAI-ANIMA1.safetensors"))
             qwen_path = COMFY_ROOT / "models/text_encoders/qwen_3_06b_base.safetensors"
             vae_path = COMFY_ROOT / "models/vae/qwen_image_vae.safetensors"
