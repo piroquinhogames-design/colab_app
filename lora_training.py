@@ -286,14 +286,14 @@ class AnimaLoRATrainer:
                 "--dataset_config", str(config_path), "--output_dir", str(output),
                 "--output_name", project, "--save_model_as", "safetensors",
                 "--network_module", "networks.lora_anima", "--network_dim", str(rank),
-                "--network_alpha", str(rank), "--network_train_unet_only",
+                "--network_alpha", "1", "--network_train_unet_only",
                 "--learning_rate", str(lr), "--optimizer_type", "AdamW8bit",
                 "--lr_scheduler", "constant", "--timestep_sampling", "sigmoid",
                 "--discrete_flow_shift", "1.0", "--max_train_epochs", str(epochs),
                 "--save_every_n_epochs", "1", "--save_last_n_epochs", "3",
                 "--mixed_precision", "fp16", "--gradient_checkpointing",
                 "--cache_latents", "--cache_text_encoder_outputs",
-                "--qwen_image_vae_2d", "--blocks_to_swap", "12", "--block_swap_h2d_only",
+                "--qwen_image_vae_2d", "--blocks_to_swap", "12", "--block_swap_ring_size", "1", "--block_swap_h2d_only",
                 "--max_data_loader_n_workers", "0",
             ]
             self.cancel_requested.clear()
