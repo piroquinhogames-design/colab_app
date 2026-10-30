@@ -1210,6 +1210,38 @@ archive_ready = threading.Event()
 archive_restore_lock = threading.Lock()
 PUBLIC_COMFY_WORKFLOW = ROOT / "integrations" / "ModelLab_SillyTavern.json"
 public_comfy_status = "pending" if os.environ.get("STUDIO_PREPARE_COMFY") == "1" else "disabled"
+training_assets_status = "not_started"
+training_assets_error = None
+training_assets_thread: threading.Thread | None = None
+training_assets_lock = threading.Lock()
+
+
+def prepare_training_assets() -> None:
+    global training_assets_status, training_assets_error, training_assets_thread
+    with training_assets_lock:
+        if training_assets_thread and training_assets_thread.is_alive():
+            return
+        training_assets_status = "preparing"
+        training_assets_error = None
+
+        def worker():
+            global training_assets_status, training_assets_error
+            acquired = engine.load_lock.acquire(timeout=240)
+            if not acquired:
+                training_assets_status = "failed"
+                training_assets_error = "O motor de geração permaneceu ocupado. Tente preparar novamente."
+                return
+            try:
+                engine._load_pipeline(get_model_spec(DEFAULT_MODEL_ID))
+                training_assets_status = "ready"
+            except Exception as exc:
+                training_assets_status = "failed"
+                training_assets_error = str(exc)[:1500]
+            finally:
+                engine.load_lock.release()
+
+        training_assets_thread = threading.Thread(target=worker, name="anima-training-assets", daemon=True)
+        training_assets_thread.start()
 
 
 def initialize_public_comfy() -> None:
@@ -2254,14 +2286,19 @@ def clear_model_cache():
 @app.route("/api/lora-training/status")
 @authentication_required
 def lora_training_status():
-    return jsonify(lora_trainer.snapshot())
+    payload = lora_trainer.snapshot()
+    payload["assets_status"] = training_assets_status
+    payload["assets_error"] = training_assets_error
+    return jsonify(payload)
 
 
 @app.route("/api/lora-training/prepare", methods=["POST"])
 @authentication_required
 @csrf_required
 def lora_training_prepare():
-    return jsonify(lora_trainer.prepare()), 202
+    result = lora_trainer.prepare()
+    prepare_training_assets()
+    return jsonify({"trainer": result, "assets_status": training_assets_status}), 202
 
 
 @app.route("/api/lora-training/dataset", methods=["POST"])
