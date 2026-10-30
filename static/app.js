@@ -1,4 +1,4 @@
-import { restoreLastSettings as applyLastSettings } from '/static/settings.js?v=20260822-5';
+import { restoreLastSettings as applyLastSettings } from '/static/settings.js?v=20261030-1';
 
 const state = {
   csrf: null,
