@@ -903,7 +903,7 @@ async function refreshTrainedLoras() {
   try {
     const data = await api('/api/lora-training/loras');
     if (!data.items?.length) { target.innerHTML = '<p class="catalog-empty">Nenhuma LoRA treinada nesta sessão.</p>'; return; }
-    target.innerHTML = data.items.map(item => '<article class="trained-lora-item"><div><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.file) + ' · ' + Number(item.size_mb).toFixed(1) + ' MB</small></div><button type="button" data-connect-local="' + escapeHtml(item.file) + '" data-lora-name="' + escapeHtml(item.name) + '">CONECTAR AO RACK</button></article>').join('');
+    target.innerHTML = data.items.map(item => '<article class="trained-lora-item"><div><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.file) + ' · ' + Number(item.size_mb).toFixed(1) + ' MB</small></div><div class="trained-lora-actions"><a href="/api/lora-training/download/' + encodeURIComponent(item.file) + '">BAIXAR</a><button type="button" data-connect-local="' + escapeHtml(item.file) + '" data-lora-name="' + escapeHtml(item.name) + '">CONECTAR AO RACK</button></div></article>').join('');
   } catch (error) { target.innerHTML = '<p class="catalog-empty">' + escapeHtml(error.message) + '</p>'; }
 }
 
