@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/style.css?v=20260822-4" />
+    <link rel="stylesheet" href="/static/style.css?v=20261030-1" />
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
@@ -18,7 +18,7 @@
         <span class="glitch mini-glitch" data-text="MODELLAB">MODELLAB</span>
         <small>Studio</small>
       </a>
-      <nav class="top-nav" aria-label="Navegação principal"><button id="open-model-settings" class="top-nav-button" type="button">⚙ CONFIGURAÇÕES</button><button id="open-prompt-store-top" class="top-nav-button" type="button">✦ LOJA DE PROMPTS</button></nav>
+      <nav class="top-nav" aria-label="Navegação principal"><button id="open-lora-training" class="top-nav-button" type="button">✦ TREINAR LoRA</button><button id="open-model-settings" class="top-nav-button" type="button">⚙ CONFIGURAÇÕES</button><button id="open-prompt-store-top" class="top-nav-button" type="button">✦ LOJA DE PROMPTS</button></nav>
       <div class="node-status" id="node-status">
         <i></i><span>NODE // VERIFICANDO</span>
       </div>
@@ -157,12 +157,63 @@
       <div class="catalog-footer"><span id="prompt-store-note">Filtros combináveis procuram termos nos metadados públicos do Civitai.</span><button id="next-prompt-store" class="subtle-button" type="button" disabled>PRÓXIMA PÁGINA →</button></div>
     </dialog>
 
+    <dialog id="lora-training-dialog" class="lora-training-dialog">
+      <div class="dialog-top">
+        <div><p class="eyebrow">[ MODEL LAB / ANIMA TRAINING ]</p><h2>TREINAMENTO LoRA</h2>
+          <p class="store-lead">Treine adaptadores para WAI-ANIMA v1.0 diretamente na sessão Colab. Perfil de memória preparado para NVIDIA T4 16 GB.</p></div>
+        <button id="close-lora-training" type="button" class="close-button" aria-label="Fechar treinamento">×</button>
+      </div>
+      <section class="training-card panel-inset">
+        <div class="training-section-head"><h3>01 // AMBIENTE</h3><span id="training-setup-status">AMBIENTE NÃO PREPARADO</span></div>
+        <p class="settings-help">O treinador usa um ambiente Python isolado. O PyTorch e as dependências do ComfyUI não serão substituídos.</p>
+        <button id="prepare-lora-training" class="signal-button small" type="button">PREPARAR TREINADOR ANIMA</button>
+      </section>
+      <section class="training-card panel-inset">
+        <div class="training-section-head"><h3>02 // DATASET</h3><span>ZIP • ATÉ 200 MB</span></div>
+        <form id="lora-dataset-form" class="training-form">
+          <label>Nome do dataset<input id="training-dataset-name" name="name" maxlength="48" placeholder="ex.: meu-dataset" required /></label>
+          <label>Arquivo ZIP<input id="training-dataset-file" name="dataset" type="file" accept=".zip,application/zip" required /></label>
+          <label>Legenda comum (opcional)<textarea id="training-shared-caption" name="caption" rows="2" maxlength="1500" placeholder="Usada apenas nas imagens que não possuem arquivo .txt correspondente."></textarea></label>
+          <button class="subtle-button" type="submit" id="upload-training-dataset">IMPORTAR DATASET</button>
+        </form>
+        <p id="training-dataset-status" class="settings-help">Organize o ZIP com imagens e arquivos .txt de mesmo nome. Cada imagem precisa de uma legenda.</p>
+      </section>
+      <section class="training-card panel-inset">
+        <div class="training-section-head"><h3>03 // PARÂMETROS</h3><span>WAI-ANIMA v1.0</span></div>
+        <form id="lora-training-form" class="training-form">
+          <label>Nome da LoRA<input id="training-project-name" maxlength="48" value="anima-lora" required /></label>
+          <div class="training-fields">
+            <label>Resolução<select id="training-resolution"><option value="512">512</option><option value="640">640</option><option value="768">768</option></select></label>
+            <label>Rank<select id="training-rank"><option value="4">4</option><option value="8" selected>8</option><option value="16">16</option></select></label>
+            <label>Épocas<input id="training-epochs" type="number" min="1" max="20" value="4" /></label>
+            <label>Repeats<input id="training-repeats" type="number" min="1" max="10" value="2" /></label>
+            <label>Learning rate<input id="training-learning-rate" type="number" min="0.000001" max="0.0005" step="0.000001" value="0.0001" /></label>
+          </div>
+          <label class="training-confirm"><input id="training-confirm-sfw" type="checkbox" required /> Confirmo que o dataset contém exclusivamente imagens e material SFW.</label>
+          <label class="training-confirm"><input id="training-confirm-long" type="checkbox" /> Permitir execução com estimativa superior a 1.200 passos.</label>
+          <button class="signal-button" id="start-lora-training" type="submit">INICIAR TREINAMENTO</button>
+        </form>
+      </section>
+      <section class="training-card panel-inset">
+        <div class="training-section-head"><h3>04 // TELEMETRIA</h3><span id="training-state">AGUARDANDO</span></div>
+        <div class="training-progress-meta"><strong id="training-progress-number">0%</strong><span id="training-step-count">0 / 0 passos</span><span id="training-loss">LOSS --</span></div>
+        <div class="training-progress-rail"><div id="training-progress-bar"></div></div>
+        <p id="training-error" class="training-error" role="status"></p>
+        <pre id="training-log" class="training-log" aria-live="polite">O log do treinamento aparecerá aqui.</pre>
+        <button id="cancel-lora-training" class="subtle-button" type="button" disabled>CANCELAR TREINAMENTO</button>
+      </section>
+      <section class="training-card panel-inset">
+        <div class="training-section-head"><h3>05 // LoRAs INSTALADAS</h3><button id="refresh-trained-loras" class="text-button" type="button">ATUALIZAR</button></div>
+        <div id="trained-lora-list" class="trained-lora-list"><p class="catalog-empty">Nenhuma LoRA treinada nesta sessão.</p></div>
+      </section>
+    </dialog>
+
     <dialog id="image-dialog" class="image-dialog">
       <div class="image-dialog-top"><div><p class="eyebrow">[ OUTPUT SIGNAL / FULLSCREEN VIEW ]</p><h2 id="image-dialog-title">IMAGEM EM DESTAQUE</h2></div><button id="close-image-dialog" class="close-button" type="button" aria-label="Fechar tela cheia">×</button></div>
       <div class="image-dialog-body"><img id="image-dialog-preview" alt="Pré-visualização ampliada" /><div class="image-dialog-info"><p id="image-dialog-prompt"></p><div id="image-dialog-meta"></div><button id="image-dialog-remix" class="signal-button" type="button">⟳ REMIXAR ESTA IMAGEM</button></div></div>
     </dialog>
     <div role="status" aria-live="polite" id="toast" class="toast" role="status"></div>
     <dialog id="compare-dialog" class="image-dialog"><div class="dialog-top"><h2>COMPARAR RESULTADOS</h2><button id="close-compare" class="close-button" aria-label="Fechar comparação" type="button">×</button></div><div id="comparison-images" class="comparison-grid"></div></dialog>
-    <script type="module" src="/static/app.js?v=20260822-5"></script>
+    <script type="module" src="/static/app.js?v=20261030-1"></script>
   </body>
 </html>
