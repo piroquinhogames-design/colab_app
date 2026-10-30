@@ -427,7 +427,7 @@ def csrf_required(view: Callable):
 
 @dataclass
 class LoRASelection:
-    version_id: int
+    version_id: int | None
     model_id: int | None
     name: str
     weight: float
@@ -947,7 +947,7 @@ class JobManager:
         if not isinstance(params.get("loras", []), list) or len(params.get("loras", [])) > MAX_LORAS: raise ValueError("LoRAs inválidas no manifesto.")
         loras = [LoRASelection(**item) for item in params.get("loras", [])]
         if any((item.local_file is None and (not isinstance(item.version_id, int) or item.version_id <= 0)) or
-               (item.local_file is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\\.safetensors", item.local_file)) or
+               (item.local_file is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", item.local_file)) or
                not isinstance(item.weight, (int, float)) or not 0 <= item.weight <= 1.5 for item in loras):
             raise ValueError("LoRA inválida no manifesto.")
         completed = data.get("status", "completed") == "completed"
@@ -1376,7 +1376,7 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
             raise ValueError("A seleção de LoRA é inválida.") from exc
         if local_file is not None:
             local_file = str(local_file)
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\\.safetensors", local_file):
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", local_file):
                 raise ValueError("Arquivo de LoRA local inválido.")
             local_path = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "loras" / local_file
             if not local_path.is_file() or local_path.is_symlink():
@@ -2323,11 +2323,15 @@ def lora_training_cancel():
 def lora_training_loras():
     directory = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "loras"
     items = []
-    for path in sorted(directory.glob("*.safetensors"), key=lambda item: item.stat().st_mtime, reverse=True):
+    for entry in lora_trainer.snapshot().get("loras", []):
+        filename = str(entry.get("file", ""))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", filename):
+            continue
+        path = directory / filename
         if path.is_symlink() or not path.is_file():
             continue
         items.append({"name": path.stem, "file": path.name, "size_mb": round(path.stat().st_size / 1024**2, 2)})
-    return jsonify({"items": items[:100]})
+    return jsonify({"items": items[-50:]})
 
 
 
@@ -2356,7 +2360,7 @@ def health():
 
 @app.errorhandler(413)
 def too_large(_: Any):
-    return jsonify({"error": "A imagem enviada excede 16 MB."}), 413
+    return jsonify({"error": "Arquivo enviado excede o limite permitido (200 MB para ZIPs e 16 MB para imagens)."}), 413
 
 
 if __name__ == "__main__":
