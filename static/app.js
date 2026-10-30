@@ -878,18 +878,23 @@ async function refreshTrainingPanel() {
     const data = await api('/api/lora-training/status');
     const setup = $('#training-setup-status'), status = $('#training-state');
     const progress = $('#training-progress-number'), bar = $('#training-progress-bar');
-    if (setup) setup.textContent = String(data.setup || 'not_started').replaceAll('_', ' ').toUpperCase();
-    if ($('#prepare-lora-training')) { $('#prepare-lora-training').disabled = data.setup === 'preparing' || data.setup === 'ready'; $('#prepare-lora-training').textContent = data.setup === 'ready' ? 'TREINADOR PRONTO' : data.setup === 'preparing' ? 'PREPARANDO…' : 'PREPARAR TREINADOR ANIMA'; }
+    if (setup) setup.textContent = 'TREINADOR ' + String(data.setup || 'not_started').replaceAll('_', ' ').toUpperCase() + ' // MODELO ' + String(data.assets_status || 'not_started').replaceAll('_', ' ').toUpperCase();
+    if ($('#prepare-lora-training')) {
+      const preparing = data.setup === 'preparing' || data.assets_status === 'preparing';
+      const ready = data.setup === 'ready' && data.assets_status === 'ready';
+      $('#prepare-lora-training').disabled = preparing || ready;
+      $('#prepare-lora-training').textContent = ready ? 'AMBIENTE E MODELO PRONTOS' : preparing ? 'PREPARANDO…' : 'PREPARAR TREINADOR E MODELO';
+    }
     if (status) status.textContent = String(data.status || 'idle').toUpperCase();
     if (progress) progress.textContent = String(Number(data.progress || 0)) + '%';
     if (bar) bar.style.width = Math.max(0, Math.min(100, Number(data.progress || 0))) + '%';
     if ($('#training-step-count')) $('#training-step-count').textContent = Number(data.current_step || 0) + ' / ' + Number(data.total_steps || 0) + ' passos';
     if ($('#training-loss')) $('#training-loss').textContent = data.loss == null ? 'LOSS --' : 'LOSS ' + Number(data.loss).toFixed(5);
     if ($('#training-log')) $('#training-log').textContent = (data.logs || []).join('\n') || 'O log do treinamento aparecerá aqui.';
-    if ($('#training-error')) $('#training-error').textContent = data.error || '';
+    if ($('#training-error')) $('#training-error').textContent = data.error || data.assets_error || '';
     if ($('#cancel-lora-training')) $('#cancel-lora-training').disabled = !['queued', 'running'].includes(data.status);
     await refreshTrainedLoras();
-    if (!data.busy && state.trainingPollTimer) { clearInterval(state.trainingPollTimer); state.trainingPollTimer = null; }
+    if (!data.busy && data.assets_status !== 'preparing' && state.trainingPollTimer) { clearInterval(state.trainingPollTimer); state.trainingPollTimer = null; }
   } catch (error) { if ($('#training-error')) $('#training-error').textContent = error.message; }
 }
 
