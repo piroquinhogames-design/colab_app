@@ -25,6 +25,7 @@ const state = {
   previewJobId: null,
   models: [],
   presets: [], favorites: new Set(), comparison: new Set(), historyOffset: null, submitKey: null,
+  trainingPollTimer: null,
   limits: {maxLoras: 8},
 };
 
@@ -263,7 +264,7 @@ function renderSelectedLoras() {
   }
   rack.className = 'lora-rack';
   rack.innerHTML = state.selectedLoras.map((lora, index) => `
-    <article class="lora-chip" data-version="${lora.version_id}">
+    <article class="lora-chip" data-version="${escapeHtml(lora.version_id ?? lora.local_file ?? "")}">
       <strong class="lora-name" title="${escapeHtml(lora.name)}">${escapeHtml(lora.name)}</strong>
       <label><input type="range" min="0" max="1.5" step="0.05" value="${lora.weight}" data-lora-weight="${index}" /><output>${Number(lora.weight).toFixed(2)}</output></label>
       <button class="remove-lora" data-remove-lora="${index}" type="button" aria-label="Remover ${escapeHtml(lora.name)}">×</button>
@@ -282,7 +283,7 @@ function renderSelectedLoras() {
 }
 
 function addLora(lora) {
-  if (state.selectedLoras.some((item) => item.version_id === lora.version_id)) {
+  if (state.selectedLoras.some((item) => lora.local_file ? item.local_file === lora.local_file : item.version_id === lora.version_id)) {
     toast('Esse LoRA já está no rack.', true);
     return;
   }
@@ -872,6 +873,39 @@ function renderPresets() {
   select.innerHTML = '<option value="">Selecione um preset</option>' + state.presets.map(preset => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</option>`).join('');
 }
 
+async function refreshTrainingPanel() {
+  try {
+    const data = await api('/api/lora-training/status');
+    const setup = $('#training-setup-status'), status = $('#training-state');
+    const progress = $('#training-progress-number'), bar = $('#training-progress-bar');
+    if (setup) setup.textContent = String(data.setup || 'not_started').replaceAll('_', ' ').toUpperCase();
+    if ($('#prepare-lora-training')) { $('#prepare-lora-training').disabled = data.setup === 'preparing' || data.setup === 'ready'; $('#prepare-lora-training').textContent = data.setup === 'ready' ? 'TREINADOR PRONTO' : data.setup === 'preparing' ? 'PREPARANDO…' : 'PREPARAR TREINADOR ANIMA'; }
+    if (status) status.textContent = String(data.status || 'idle').toUpperCase();
+    if (progress) progress.textContent = String(Number(data.progress || 0)) + '%';
+    if (bar) bar.style.width = Math.max(0, Math.min(100, Number(data.progress || 0))) + '%';
+    if ($('#training-step-count')) $('#training-step-count').textContent = Number(data.current_step || 0) + ' / ' + Number(data.total_steps || 0) + ' passos';
+    if ($('#training-loss')) $('#training-loss').textContent = data.loss == null ? 'LOSS --' : 'LOSS ' + Number(data.loss).toFixed(5);
+    if ($('#training-log')) $('#training-log').textContent = (data.logs || []).join('\n') || 'O log do treinamento aparecerá aqui.';
+    if ($('#training-error')) $('#training-error').textContent = data.error || '';
+    if ($('#cancel-lora-training')) $('#cancel-lora-training').disabled = !['queued', 'running'].includes(data.status);
+    await refreshTrainedLoras();
+    if (!data.busy && state.trainingPollTimer) { clearInterval(state.trainingPollTimer); state.trainingPollTimer = null; }
+  } catch (error) { if ($('#training-error')) $('#training-error').textContent = error.message; }
+}
+
+async function refreshTrainedLoras() {
+  const target = $('#trained-lora-list'); if (!target) return;
+  try {
+    const data = await api('/api/lora-training/loras');
+    if (!data.items?.length) { target.innerHTML = '<p class="catalog-empty">Nenhuma LoRA treinada nesta sessão.</p>'; return; }
+    target.innerHTML = data.items.map(item => '<article class="trained-lora-item"><div><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.file) + ' · ' + Number(item.size_mb).toFixed(1) + ' MB</small></div><button type="button" data-connect-local="' + escapeHtml(item.file) + '" data-lora-name="' + escapeHtml(item.name) + '">CONECTAR AO RACK</button></article>').join('');
+  } catch (error) { target.innerHTML = '<p class="catalog-empty">' + escapeHtml(error.message) + '</p>'; }
+}
+
+function openLoraTraining() {
+  $('#lora-training-dialog')?.showModal(); refreshTrainingPanel();
+  if (!state.trainingPollTimer) state.trainingPollTimer = setInterval(refreshTrainingPanel, 2500);
+}
 function bindEvents() {
   state.lowPower = detectLowPowerMode();
   $$('.mode').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
@@ -897,6 +931,30 @@ function bindEvents() {
   ['#catalog-sort', '#catalog-period', '#catalog-base-filter', '#catalog-date-from', '#catalog-date-to'].forEach((selector) => on(selector, 'change', () => { state.catalogCursor = null; loadCatalog(); }));
   on('#catalog-adult', 'change', () => { state.catalogCursor = null; const next = $('#next-catalog'); if (next) next.disabled = true; loadCatalog(); });
   on('#next-catalog', 'click', () => loadCatalog({append: true}));
+  on('#open-lora-training', 'click', openLoraTraining);
+  on('#close-lora-training', 'click', () => { $('#lora-training-dialog')?.close(); if (state.trainingPollTimer) { clearInterval(state.trainingPollTimer); state.trainingPollTimer = null; } });
+  on('#prepare-lora-training', 'click', async () => { try { await api('/api/lora-training/prepare', {method: 'POST'}); toast('Preparação do treinador iniciada. Isso pode levar alguns minutos.'); if (!state.trainingPollTimer) state.trainingPollTimer = setInterval(refreshTrainingPanel, 2500); refreshTrainingPanel(); } catch (error) { toast(error.message, true); } });
+  on('#lora-dataset-form', 'submit', async event => {
+    event.preventDefault(); const file = $('#training-dataset-file')?.files?.[0]; if (!file) { toast('Selecione um arquivo ZIP.', true); return; }
+    const button = $('#upload-training-dataset'); button.disabled = true;
+    try { const form = new FormData(); form.set('dataset', file); form.set('name', valueOf('#training-dataset-name')); form.set('caption', valueOf('#training-shared-caption'));
+      const result = await api('/api/lora-training/dataset', {method: 'POST', body: form, signal: AbortSignal.timeout(300000)});
+      $('#training-dataset-status').textContent = result.name + ': ' + result.images + ' imagens e legendas prontas.'; toast('Dataset importado.');
+    } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
+  });
+  on('#lora-training-form', 'submit', async event => {
+    event.preventDefault(); if (!checkedOf('#training-confirm-sfw')) { toast('Confirme que o dataset é SFW.', true); return; }
+    const button = $('#start-lora-training'); button.disabled = true;
+    try { const result = await api('/api/lora-training/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+      project_name: valueOf('#training-project-name'), dataset: valueOf('#training-dataset-name'), resolution: Number(valueOf('#training-resolution')),
+      rank: Number(valueOf('#training-rank')), epochs: Number(valueOf('#training-epochs')), repeats: Number(valueOf('#training-repeats')),
+      learning_rate: Number(valueOf('#training-learning-rate')), confirm_sfw: true, confirm_long_run: checkedOf('#training-confirm-long'),
+    })}); toast('Treinamento iniciado: ' + result.project_name + '.'); if (!state.trainingPollTimer) state.trainingPollTimer = setInterval(refreshTrainingPanel, 2500); refreshTrainingPanel();
+    } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
+  });
+  on('#cancel-lora-training', 'click', async () => { try { await api('/api/lora-training/cancel', {method: 'POST'}); toast('Cancelamento solicitado.'); refreshTrainingPanel(); } catch (error) { toast(error.message, true); } });
+  on('#refresh-trained-loras', 'click', refreshTrainedLoras);
+  on('#trained-lora-list', 'click', event => { const button = event.target.closest('[data-connect-local]'); if (!button) return; addLora({local_file: button.dataset.connectLocal, name: button.dataset.loraName || button.dataset.connectLocal}); renderSelectedLoras(); });
   on('#open-model-settings', 'click', openModelSettings);
   on('#open-model-settings-inline', 'click', openModelSettings);
   on('#close-model-settings', 'click', () => $('#settings-dialog')?.close());
