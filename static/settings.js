@@ -37,7 +37,7 @@ export function restoreLastSettings(settings, dependencies) {
     .filter((item) => {
       if (!item || typeof item.name !== 'string') return false;
       const remote = Number.isSafeInteger(Number(item.version_id)) && Number(item.version_id) > 0;
-      const local = typeof item.local_file === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{1,47}\\.safetensors$/.test(item.local_file);
+      const local = typeof item.local_file === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors$/.test(item.local_file);
       return remote || local;
     })
     .slice(0, maxLoras).map((item) => {
