@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import shutil
 import subprocess
 import threading
@@ -309,7 +310,7 @@ class AnimaLoRATrainer:
                 raise RuntimeError("Treinamento cancelado antes de iniciar.")
             with log_path.open("a", encoding="utf-8") as log:
                 process = subprocess.Popen(command, cwd=str(SCRIPTS), stdout=subprocess.PIPE,
-                                           stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                           stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
                 with self.lock:
                     self.process = process
                 if self.cancel_requested.is_set() and process.poll() is None:
@@ -377,11 +378,17 @@ class AnimaLoRATrainer:
         with self.lock:
             process = self.process
         if process and process.poll() is None:
-            process.terminate()
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                process.kill()
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             with self.lock:
                 self.state.update({"status": "cancelled", "error": "Treinamento cancelado pelo painel."})
                 self._persist()
