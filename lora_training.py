@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import zipfile
+from PIL import Image
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -51,6 +52,7 @@ class AnimaLoRATrainer:
         self.setup_thread: threading.Thread | None = None
         self.train_thread: threading.Thread | None = None
         self.process: subprocess.Popen[str] | None = None
+        self.cancel_requested = threading.Event()
         self.state: dict[str, Any] = read_json(STATE, {}) or {}
         self.state.setdefault("setup", "not_started")
         self.state.setdefault("status", "idle")
@@ -187,6 +189,14 @@ class AnimaLoRATrainer:
             images = sorted(p for p in temporary.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
             if not images:
                 raise ValueError("O ZIP não contém imagens PNG, JPG ou WEBP.")
+            for image_path in images:
+                try:
+                    with Image.open(image_path) as image:
+                        if image.width * image.height > 24_000_000:
+                            raise ValueError("Imagem excede 24 megapixels: " + image_path.name)
+                        image.verify()
+                except Exception as exc:
+                    raise ValueError("Imagem inválida no dataset: " + image_path.name) from exc
             caption = str(shared_caption or "").strip()[:1500]
             missing = [p for p in images if not p.with_suffix(".txt").exists()]
             if missing and not caption:
@@ -271,10 +281,11 @@ class AnimaLoRATrainer:
                 "--save_every_n_epochs", "1", "--save_last_n_epochs", "3",
                 "--mixed_precision", "fp16", "--gradient_checkpointing",
                 "--cache_latents", "--cache_text_encoder_outputs",
-                "--qwen_image_vae_2d", "--blocks_to_swap", "16", "--block_swap_h2d_only",
+                "--qwen_image_vae_2d", "--blocks_to_swap", "12", "--block_swap_h2d_only",
                 "--max_data_loader_n_workers", "0",
             ]
             run_id = uuid.uuid4().hex[:12]
+            self.cancel_requested.clear()
             self.state.update({"status": "queued", "run_id": run_id, "project_name": project,
                                "dataset": dataset_name, "progress": 0, "current_step": 0,
                                "total_steps": steps, "loss": None, "error": None,
@@ -293,6 +304,8 @@ class AnimaLoRATrainer:
                 self.state["status"] = "running"
                 self._persist()
             self._log(f"Treinamento {project} iniciado em FP16 para T4.")
+            if self.cancel_requested.is_set():
+                raise RuntimeError("Treinamento cancelado antes de iniciar.")
             with log_path.open("a", encoding="utf-8") as log:
                 process = subprocess.Popen(command, cwd=str(SCRIPTS), stdout=subprocess.PIPE,
                                            stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -353,6 +366,7 @@ class AnimaLoRATrainer:
                 self.on_finish()
 
     def cancel(self) -> None:
+        self.cancel_requested.set()
         with self.lock:
             process = self.process
         if process and process.poll() is None:
