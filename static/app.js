@@ -342,7 +342,6 @@ function bindCatalogActions() {
       const model = JSON.parse(button.dataset.addLora);
       const picker = button.closest('.catalog-card').querySelector('[data-version-select]');
       const version = model.versions.find((candidate) => String(candidate.id) === String(picker.value)) || model.versions[0];
-      if (!String(version.base_model || '').toLowerCase().includes('anima')) { toast(`A versão ${version.name} usa ${version.base_model || 'base não informada'}. Escolha uma versão Anima.`, true); return; }
       addLora({version_id: Number(version.id), model_id: Number(model.model_id), name: model.name, version: version.name});
     } catch { toast('Não foi possível interpretar essa versão de LoRA.', true); }
   }));
@@ -377,12 +376,13 @@ async function useModelFromStore(item) {
   try {
     const profile = await api('/api/model-profile', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(item)});
     const selected = [...state.models.filter((model) => model.id !== profile.id), profile];
-    renderModels(selected, profile.id);
-    updateModelProfile(profile.id, {applyDefaults: true});
+    const activeId = $('#model')?.value || state.models[0]?.id || profile.id;
+    renderModels(selected, activeId);
+    updateModelProfile(activeId, {silent: true, applyDefaults: false});
     $('#model-store-dialog').close();
     $('#settings-dialog').showModal();
-    toast(`${profile.name} aplicado // família ${String(profile.family).toUpperCase()}.`);
-    log(`Perfil Civitai carregado: ${profile.name}. As lojas foram trocadas para ${String(profile.family).toUpperCase()}.`);
+    toast(`${profile.name} cadastrado. Escolha-o manualmente em CONFIGURAÇÕES para ativá-lo.`);
+    log(`Perfil Civitai cadastrado: ${profile.name}. O modelo ativo não foi alterado.`);
   } catch (error) { toast(error.message, true); }
 }
 
