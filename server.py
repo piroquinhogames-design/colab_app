@@ -2332,6 +2332,13 @@ def lora_training_start():
     with manager.lock:
         if any(job.status in {"queued", "running"} for job in manager.jobs.values()):
             return jsonify({"error": "Aguarde as gerações atuais terminarem antes de iniciar o treinamento."}), 409
+    required_training_files = (
+        Path(MODEL_PATH),
+        Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "text_encoders" / "qwen_3_06b_base.safetensors",
+        Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "vae" / "qwen_image_vae.safetensors",
+    )
+    if any(not path.is_file() for path in required_training_files):
+        return jsonify({"error": "Os arquivos do WAI-ANIMA, Qwen3 e VAE ainda não estão prontos. Clique em PREPARAR TREINADOR E MODELO e aguarde."}), 409
     if not engine.load_lock.acquire(blocking=False):
         return jsonify({"error": "O motor de geração está ocupado. Tente novamente quando estiver livre."}), 409
     try:
