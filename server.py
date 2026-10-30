@@ -1368,12 +1368,12 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
     for candidate in candidates:
         if not isinstance(candidate, dict): raise ValueError("A seleção de LoRA é inválida.")
         try:
-            version_id = int(candidate["version_id"])
+            local_file = candidate.get("local_file")
+            version_id = int(candidate["version_id"]) if local_file is None else None
             model_id = int(candidate["model_id"]) if candidate.get("model_id") else None
             weight = float(candidate.get("weight", 0.8))
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("A seleção de LoRA é inválida.") from exc
-        local_file = candidate.get("local_file")
         if local_file is not None:
             local_file = str(local_file)
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\\.safetensors", local_file):
