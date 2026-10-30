@@ -48,7 +48,7 @@ O botão **TREINAR LoRA** abre o fluxo de treinamento no próprio painel. O trei
 2. Envie um ZIP de até 200 MB com imagens PNG/JPG/WEBP e legendas `.txt` com o mesmo nome-base. Se as imagens não tiverem legendas individuais, o painel pode aplicar uma legenda comum.
 3. Defina nome, resolução (512/640/768), rank, épocas, repeats e learning rate. Confirme que o dataset é exclusivamente SFW.
 4. Acompanhe estado, passos, loss e logs. O treinamento pode ser cancelado pelo painel.
-5. Ao terminar, o arquivo `.safetensors` é copiado para `COMFY_ROOT/models/loras` e aparece na lista de LoRAs treinadas. Use **CONECTAR AO RACK** para aplicá-lo nas próximas gerações.
+5. Ao terminar, o arquivo `.safetensors` é copiado para `COMFY_ROOT/models/loras` e aparece na lista de LoRAs treinadas. Use **CONECTAR AO RACK** para aplicá-lo nas próximas gerações ou **BAIXAR** para salvar uma cópia local do arquivo.
 
 O perfil de memória T4 usa FP16 (T4 não oferece BF16 nativo), batch size 1, AdamW8bit, alpha 1, gradient checkpointing, cache de latents e saídas do encoder, VAE 2D e block swapping H2D-only com ring buffer 1 para priorizar VRAM. Antes do treino, o painel libera a VRAM e pausa o processo ComfyUI para evitar disputa pela T4; ao terminar ou cancelar, o backend é reiniciado automaticamente sem carregar o checkpoint. Se o túnel ComfyUI externo tiver sido habilitado, ele ficará indisponível somente durante o treinamento. A instalação do treinador não altera as dependências de inferência.
 
