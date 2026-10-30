@@ -2427,6 +2427,20 @@ def lora_training_cancel():
     return jsonify({"ok": True})
 
 
+@app.route("/api/lora-training/download/<filename>")
+@authentication_required
+def download_trained_lora(filename: str):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\\.safetensors", filename):
+        return jsonify({"error": "Nome de arquivo inválido."}), 400
+    if filename not in {item.get("file") for item in lora_trainer.snapshot().get("loras", [])}:
+        return jsonify({"error": "LoRA treinada não encontrada no arquivo do painel."}), 404
+    directory = Path(os.environ.get("COMFY_ROOT", ROOT / "comfyui-runtime")) / "models" / "loras"
+    path = directory / filename
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(directory.resolve()):
+        return jsonify({"error": "Arquivo de LoRA indisponível."}), 404
+    return send_file(path, as_attachment=True, download_name=filename, mimetype="application/octet-stream")
+
+
 @app.route("/api/lora-training/loras")
 @authentication_required
 def lora_training_loras():
