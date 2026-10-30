@@ -1406,6 +1406,8 @@ def validate_params(raw: dict[str, Any], source_image: str | None) -> Generation
             weight = float(candidate.get("weight", 0.8))
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("A seleção de LoRA é inválida.") from exc
+        if not math.isfinite(weight) or not 0 <= weight <= 1.5:
+            raise ValueError("O peso de LoRA deve estar entre 0 e 1,5.")
         if local_file is not None:
             local_file = str(local_file)
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,47}\.safetensors", local_file):
