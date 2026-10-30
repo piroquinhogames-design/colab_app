@@ -2348,6 +2348,7 @@ def lora_training_start():
                 timeout=30,
             )
             response.raise_for_status()
+        engine.comfy.close_process()
         result = lora_trainer.start(payload)
         return jsonify(result), 202
     except (ValueError, TypeError) as exc:
