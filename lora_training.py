@@ -287,7 +287,7 @@ class AnimaLoRATrainer:
                 "--output_name", project, "--save_model_as", "safetensors",
                 "--network_module", "networks.lora_anima", "--network_dim", str(rank),
                 "--network_alpha", "1", "--network_train_unet_only",
-                "--learning_rate", str(lr), "--optimizer_type", "AdamW8bit",
+                "--learning_rate", str(lr), "--train_batch_size", "1", "--optimizer_type", "AdamW8bit",
                 "--lr_scheduler", "constant", "--timestep_sampling", "sigmoid",
                 "--discrete_flow_shift", "1.0", "--max_train_epochs", str(epochs),
                 "--save_every_n_epochs", "1", "--save_last_n_epochs", "3",
