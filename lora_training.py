@@ -355,10 +355,12 @@ class AnimaLoRATrainer:
                 self._persist()
             self._log(f"LoRA instalada no diretório do ComfyUI: {target.name}")
         except Exception as exc:
+            cancelled = self.cancel_requested.is_set()
             with self.lock:
-                self.state.update({"status": "failed", "error": str(exc)[:1800]})
+                self.state.update({"status": "cancelled" if cancelled else "failed",
+                                   "error": "Treinamento cancelado pelo painel." if cancelled else str(exc)[:1800]})
                 self._persist()
-            self._log("Treinamento falhou: " + str(exc))
+            self._log("Treinamento cancelado." if cancelled else "Treinamento falhou: " + str(exc))
         finally:
             with self.lock:
                 self.process = None
