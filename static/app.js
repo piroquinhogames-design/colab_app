@@ -990,6 +990,18 @@ function bindEvents() {
   on('#cancel-lora-training', 'click', async () => { try { await api('/api/lora-training/cancel', {method: 'POST'}); toast('Cancelamento solicitado.'); refreshTrainingPanel(); } catch (error) { toast(error.message, true); } });
   on('#refresh-trained-loras', 'click', refreshTrainedLoras);
   on('#trained-lora-list', 'click', event => { const button = event.target.closest('[data-connect-local]'); if (!button) return; addLora({local_file: button.dataset.connectLocal, name: button.dataset.loraName || button.dataset.connectLocal}); renderSelectedLoras(); });
+  on('#update-app', 'click', async () => {
+    const button = $('#update-app');
+    if (!window.confirm('Buscar a versão mais recente no GitHub e recarregar o app? Modelos, datasets e LoRAs não serão apagados.')) return;
+    button.disabled = true; button.textContent = '↻ ATUALIZANDO…';
+    try {
+      const result = await api('/api/app/update', {method: 'POST'});
+      toast(result.message || 'App atualizado. Recarregando…');
+      setTimeout(() => window.location.reload(), 1800);
+    } catch (error) {
+      button.disabled = false; button.textContent = '↻ ATUALIZAR APP'; toast(error.message, true);
+    }
+  });
   on('#open-model-settings', 'click', openModelSettings);
   on('#open-model-settings-inline', 'click', openModelSettings);
   on('#close-model-settings', 'click', () => $('#settings-dialog')?.close());

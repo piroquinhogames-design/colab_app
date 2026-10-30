@@ -40,6 +40,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .top-nav { margin-left: auto; }
 .top-nav-button { padding: .55rem .75rem; border: 1px solid rgba(196,162,255,.36); border-radius: 999px; color: var(--violet); background: rgba(196,162,255,.07); font: .59rem var(--mono); letter-spacing: .06em; transition: transform .3s var(--ease-liquid), background .3s ease, border-color .3s ease, color .3s ease; }
 .top-nav-button:hover { color: #181224; background: var(--violet); border-color: var(--violet); transform: translateY(-2px); box-shadow: 0 10px 24px rgba(196,162,255,.18); }
+.update-app-button { color: var(--acid); border-color: rgba(203,255,143,.32); }
+.update-app-button:hover { color: #111525; background: var(--acid); border-color: var(--acid); }
 .node-status { color: var(--muted); font: 500 .66rem var(--mono); letter-spacing: .09em; display: flex; align-items: center; gap: .5rem; white-space: nowrap; }
 .node-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 0 5px rgba(210,251,168,.08), 0 0 16px var(--acid); animation: pulse 2.2s ease-in-out infinite; }
 .node-status.offline i { background: var(--danger); box-shadow: 0 0 0 5px rgba(255,157,169,.08), 0 0 16px var(--danger); }

@@ -28,6 +28,7 @@ import threading
 import time
 import types
 import uuid
+import sys
 from dataclasses import dataclass, field, asdict, replace
 from urllib.parse import urlparse
 from datetime import datetime, timezone
@@ -51,6 +52,7 @@ from studio_security import LoginLimiter, bounded_civitai_image
 login_limiter = LoginLimiter()
 
 
+APP_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("STUDIO_ROOT", "/content/modellab-studio")).resolve()
 # O cache fica fora do diretório do checkpoint para permitir trocar o perfil sem
 # duplicar os shards. Se houver um cache da execução anterior, ele é reaproveitado.
@@ -2471,6 +2473,40 @@ def diagnostics():
     return jsonify({"python": __import__("sys").version.split()[0], "packages": versions,
         "backend": engine.comfy.status(), "disk_free_gb": round(disk.free / 1024**3, 2),
         "queue": manager.pending.qsize(), "archive": {"available": archive.available, "error": archive.error}})
+
+
+def _reload_server_after_update() -> None:
+    time.sleep(1.25)
+    os.execv(sys.executable, [sys.executable, "-u", "server.py"])
+
+
+@app.route("/api/app/update", methods=["POST"])
+@authentication_required
+@csrf_required
+def update_app():
+    """Atualiza somente o código versionado e reinicia este processo, não o Colab."""
+    def git(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", "-C", str(APP_DIR), *args], capture_output=True, text=True, timeout=45, check=check)
+    try:
+        status = git("status", "--porcelain")
+        if status.returncode != 0:
+            return jsonify({"error": "A pasta do app não é um repositório Git válido."}), 500
+        if status.stdout.strip():
+            return jsonify({"error": "Há alterações locais no código. Faça backup ou commit antes de atualizar pelo botão."}), 409
+        before = git("rev-parse", "HEAD").stdout.strip()
+        fetched = git("fetch", "--depth", "1", "origin", "main")
+        if fetched.returncode != 0:
+            return jsonify({"error": "Não foi possível buscar origin/main: " + fetched.stderr[-900:]}), 502
+        target = git("rev-parse", "origin/main").stdout.strip()
+        if not target or target == before:
+            return jsonify({"updated": False, "commit": before[:12], "message": "O app já está atualizado."})
+        reset = git("reset", "--hard", "origin/main")
+        if reset.returncode != 0:
+            return jsonify({"error": "Não foi possível aplicar a atualização: " + reset.stderr[-900:]}), 500
+        threading.Thread(target=_reload_server_after_update, name="modellab-app-reload", daemon=True).start()
+        return jsonify({"updated": True, "from": before[:12], "to": target[:12], "message": "Atualização aplicada. Recarregando o servidor…"}), 202
+    except (OSError, subprocess.SubprocessError) as exc:
+        return jsonify({"error": "Falha ao atualizar o app: " + str(exc)}), 500
 
 
 @app.route("/api/health")
